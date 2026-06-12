@@ -622,3 +622,20 @@ candidate_repos = [
 ]
 loc_saved = 0
 loc_saved_estimate = 56
+
+# Proposed by jeryu-tool-finder from cluster toolbuild-fa31ae385974e484.
+[[tool]]
+id = "shared-python-helper-sha256-hash-pandas-object-tobytes"
+name = "Shared python helper (sha256, hash_pandas_object, tobytes)"
+kind = "rust-crate"
+status = "proposed"
+source = ""
+description = "python normalized window repeats 46 times across 46 file(s), covering 598 lines; anchors: call:dump, call:hash_pandas_object, call:hexdigest, call:open, call:print, call:sha256, call:tobytes."
+origin_cluster = "toolbuild-fa31ae385974e484"
+adopting_repos = []
+candidate_repos = [
+  "veox-deploy",
+  "veox-warp",
+]
+loc_saved = 0
+loc_saved_estimate = 585
