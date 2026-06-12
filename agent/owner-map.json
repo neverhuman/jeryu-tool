@@ -23,7 +23,10 @@
     "policy/**": "audit",
     "scripts/": "ops",
     "scripts/**": "ops",
-    "tool-manifest.toml": "audit"
+    "tool-manifest.toml": "audit",
+    "tools-registry.toml": "registry",
+    "tasks/": "registry",
+    "tasks/**": "registry"
   },
   "workspace": "jeryu-tool"
 }

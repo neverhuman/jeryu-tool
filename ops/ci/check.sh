@@ -21,7 +21,10 @@ PY
 
 bash ops/render-tool-manifest.sh --check
 
-python3 -m py_compile ops/render_tool_manifest.py
+# Reusable-tool registry: parse + validate tools-registry.toml and tasks/.
+python3 ops/registry_summary.py --check
+
+python3 -m py_compile ops/render_tool_manifest.py ops/registry_summary.py
 for script in ops/*.sh ops/ci/*.sh; do
   [[ -e "$script" ]] || continue
   bash -n "$script"

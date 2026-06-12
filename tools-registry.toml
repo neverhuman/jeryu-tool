@@ -1,0 +1,47 @@
+# tools-registry.toml — the reusable-code-tool registry for the jeryu family.
+#
+# This is the SECOND pillar of jeryu-tool. `tool-manifest.toml` governs the
+# jankurai AUDIT toolchain; THIS file is the catalogue of reusable CODE tools —
+# shared crates / TS libs / React components / Vite plugins / shell libraries —
+# that replace copy-pasted code across repos.
+#
+# Lifecycle of a tool:
+#   proposed  -> building -> published (-> deprecated)
+# A tool starts life as a jeryu-tool-finder cross-repo cluster (`origin_cluster`).
+# An agent reviews the cluster dossier, files a build task under `tasks/`, and
+# adds a `[[tool]]` entry here. As repos migrate off their local copies they move
+# from `candidate_repos` to `adopting_repos` and realized `loc_saved` grows while
+# `loc_saved_estimate` (the remaining anticipated win) shrinks.
+#
+# The forge "golden box" on /repos reads this file (via
+# GET /api/v1/tools/registry/summary). `ops/registry_summary.py` validates it and
+# computes the same summary for the CLI/finder. See docs/tools-registry.md for the
+# full field reference and the LOC-saved definition.
+
+schema_version = "1"
+
+# --- Seeded from the first real jeryu-tool-finder family scan -----------------
+# (cluster toolbuild-e15f611608e57a22: the ops/ci gate scripts are copied
+# verbatim into every family repo.) Nothing has adopted a shared lib yet, so
+# loc_saved is 0 and the whole win is still anticipated.
+[[tool]]
+id = "jeryu-ci-shell-lib"
+name = "Shared jeryu CI shell library"
+kind = "shell-lib"                       # rust-crate | ts-lib | react-component | vite-plugin | shell-lib
+status = "proposed"                      # proposed | building | published | deprecated
+source = ""                              # canonical home; set when status reaches building/published
+description = "The ops/ci gate scripts (score.sh, security.sh, …) are copied verbatim into every family repo. A single sourced shell library would replace the duplicated gate blocks."
+origin_cluster = "toolbuild-e15f611608e57a22"
+adopting_repos = []
+candidate_repos = [
+  "jeryu",
+  "jeryu-cache",
+  "jeryu-ci-runner",
+  "jeryu-core",
+  "jeryu-deploy",
+  "jeryu-intelligence",
+  "jeryu-release-ops",
+  "jeryu-web",
+]
+loc_saved = 0
+loc_saved_estimate = 56

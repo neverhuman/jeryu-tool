@@ -1,20 +1,34 @@
 # jeryu-tool
 
-The **audit control plane** for the jeryu family. One repo owns the jankurai
-toolchain so every other repo — and every agent sandbox — gets the same auditor,
-the same pin, the same floors, and the same forced scoring, without managing any
-of it itself.
+The **tool control plane** for the jeryu family. One repo, two jobs, no product
+code:
+
+1. **Audit toolchain** — owns the jankurai pin, floors, and forced scoring so
+   every other repo and every agent sandbox audits identically (`tool-manifest.toml`).
+2. **Reusable-code-tool registry** — the catalogue of shared crates / TS libs /
+   React components / Vite plugins / shell libraries that replace copy-pasted
+   code across repos, with adoption and LOC-saved bookkeeping
+   (`tools-registry.toml` + `tasks/`). The forge "golden box" on `/repos` reads
+   this. See `docs/tools-registry.md`.
+
+Discovery of *new* tool candidates (cross-repo repeated-code clusters) lives in
+the sibling `jeryu-tool-finder` repo, which files proposals back into this
+registry.
 
 ## What lives here
 
 | Path | Purpose |
 |---|---|
-| `tool-manifest.toml` | **The single source of truth**: jankurai `{repo, rev, tag, version, semver}`, per-profile score floors, per-tool default modes. |
-| `ops/render-tool-manifest.sh` | Propagates the pin from the manifest into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
+| `tool-manifest.toml` | **Audit source of truth**: jankurai `{repo, rev, tag, version, semver}`, per-profile score floors, per-tool default modes. |
+| `tools-registry.toml` | **Registry source of truth**: one `[[tool]]` per reusable tool — kind, status, adopting/candidate repos, realized + anticipated LOC saved. |
+| `tasks/NNNN-*.toml` | Reusable-tool **build queue**: build-this-tool / migrate-these-repos work items. |
+| `ops/registry_summary.py` | Validates the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
+| `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
 | `ops/install-jankurai.sh` | Installs the jeryu-owned, pinned binary to `~/.jeryu/bin/jankurai` (the host global). |
 | `policy/default-audit-policy.toml` | The jeryu-managed fallback policy used to force-score repos that carry no policy of their own. |
 | `generated/jankurai-pin.env` | Generated sourced env (`JANKURAI_REPO/TAG/REV/VERSION/SEMVER`). Do not edit by hand. |
-| `docs/tools.md` | The tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
+| `docs/tools.md` | The jankurai tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
+| `docs/tools-registry.md` | The reusable-tool registry schema, lifecycle, and LOC-saved definition. |
 
 ## Upgrading jankurai (the whole family at once)
 

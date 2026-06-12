@@ -69,6 +69,16 @@
       "command": "just fast",
       "lane": "ci",
       "purpose": "verify every family consumer matches the single source of truth"
+    },
+    "tools-registry.toml": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify the reusable-tool registry parses and aggregates for the golden box"
+    },
+    "tasks/**": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify build-queue tasks parse and reference registered tools"
     }
   },
   "workspace": "jeryu-tool"
