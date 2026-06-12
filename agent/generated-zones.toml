@@ -1,0 +1,9 @@
+[[zones]]
+path = ".jankurai/**"
+generator = "just score"
+manual_edits = false
+
+[[zones]]
+path = "generated/**"
+generator = "bash ops/render-tool-manifest.sh"
+manual_edits = false

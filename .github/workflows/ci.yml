@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# GENERATED defaults kept in lockstep with tool-manifest.toml by
+# ops/render-tool-manifest.sh (workflow JANKURAI_* rewrite rule).
+env:
+  JANKURAI_REPO: "https://github.com/neverhuman/jankurai.git"
+  JANKURAI_TAG: "v1.6.10-deadlang-precision"
+  JANKURAI_REV: "68bd6114373cf407a930011b76669af306cb0cb1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - name: Cache pinned auditor
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/bin/jankurai
+          key: jankurai-${{ env.JANKURAI_REV }}
+      - name: Install pinned jankurai
+        run: |
+          if ! jankurai --version 2>/dev/null | grep -qx "jankurai 1.6.10"; then
+            cargo install --git "$JANKURAI_REPO" --rev "$JANKURAI_REV" --locked --bin jankurai jankurai
+          fi
+      # Same lanes the proof-lanes / Justfile declare, so CI and local stay at parity.
+      - name: fast (pin drift)
+        run: bash ops/ci/fast.sh
+      - name: check
+        run: bash ops/ci/check.sh
+      - name: score (jankurai audit)
+        run: bash ops/ci/score.sh
+      - name: security
+        run: bash ops/ci/security.sh
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-audit-artifacts
+          path: |
+            .jankurai/
+            target/jankurai/
+          if-no-files-found: ignore

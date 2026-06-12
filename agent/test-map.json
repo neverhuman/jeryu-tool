@@ -1,0 +1,75 @@
+{
+  "tests": {
+    ".github/**": {
+      "command": "just fast && just check && just score",
+      "lane": "ci",
+      "purpose": "verify hosted workflow runs the same lanes as local (parity)"
+    },
+    "AGENTS.md": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify split metadata and agent maps"
+    },
+    "CHANGELOG.md": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify release notes stay routed through the score lane"
+    },
+    "Justfile": {
+      "command": "just fast && just check && just score",
+      "lane": "ci",
+      "purpose": "verify the canonical local command wrappers stay reproducible"
+    },
+    "README.md": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify root navigation remains current"
+    },
+    "VERSION": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify version source stays aligned with release evidence"
+    },
+    "agent/": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify agent metadata parses and routes proof lanes"
+    },
+    "docs/": {
+      "command": "just check && just score",
+      "lane": "docs",
+      "purpose": "verify agent-readable docs remain routed and auditable"
+    },
+    "generated/**": {
+      "command": "just fast",
+      "lane": "ci",
+      "purpose": "verify the generated pin env matches tool-manifest.toml"
+    },
+    "ops/**": {
+      "command": "just fast && just check",
+      "lane": "ci",
+      "purpose": "verify the generator/installer parse and the pin stays consistent"
+    },
+    "ops/git-hooks/": {
+      "command": "just fast && just check && just score",
+      "lane": "ci",
+      "purpose": "verify the pre-push hook delegates to the local lanes"
+    },
+    "policy/**": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify the default fallback policy parses and stays routed"
+    },
+    "scripts/**": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify the local CI helper scripts parse and stay reproducible"
+    },
+    "tool-manifest.toml": {
+      "command": "just fast",
+      "lane": "ci",
+      "purpose": "verify every family consumer matches the single source of truth"
+    }
+  },
+  "workspace": "jeryu-tool"
+}

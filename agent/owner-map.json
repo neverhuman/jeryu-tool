@@ -1,0 +1,29 @@
+{
+  "owners": {
+    ".github/": "ops",
+    ".github/**": "ops",
+    ".gitignore": "workspace",
+    ".jankurai/": "audit",
+    ".jankurai/**": "audit",
+    "AGENTS.md": "split",
+    "CHANGELOG.md": "release",
+    "Justfile": "ops",
+    "README.md": "docs",
+    "VERSION": "release",
+    "agent/": "agent",
+    "docs/": "docs",
+    "docs/**": "docs",
+    "generated/": "audit",
+    "generated/**": "audit",
+    "ops/": "ops",
+    "ops/**": "ops",
+    "ops/ci/": "ops",
+    "ops/git-hooks/": "ops",
+    "policy/": "audit",
+    "policy/**": "audit",
+    "scripts/": "ops",
+    "scripts/**": "ops",
+    "tool-manifest.toml": "audit"
+  },
+  "workspace": "jeryu-tool"
+}

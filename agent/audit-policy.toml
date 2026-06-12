@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+workspace = "jeryu-tool"
+# public-portal profile, and the most MINIMAL repo in the family: a manifest +
+# a handful of scripts + docs, with ZERO product code. Several weighted scoring
+# dimensions are therefore structurally unreachable — there is no build system
+# (build-speed), no DB/product data (data-truth), and this is the tool CONTROL
+# PLANE, not a tool consumer (tool-adoption). A clean audit here (0 caps, 0 hard
+# findings) tops out at 66, so 65 is the reviewed floor — even lower than the
+# public portal's documented 75 because the portal still carries an installer
+# and a manifest the auditor can score. The real gates remain absolute:
+# hard_findings_allowed = 0 and no caps (see ops/ci/score.sh). Mirrored in
+# tool-manifest.toml [floors]."jeryu-tool".
+minimum_score = 65
+hard_findings_allowed = 0
+required_tool = "jankurai"
+required_tool_version = "1.6.10"
+
+[scan]
+excluded_paths = [
+  ".jankurai/",
+  "generated/",   # generated pin env; rendered from tool-manifest.toml, not authored
+]

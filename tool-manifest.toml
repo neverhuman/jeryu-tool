@@ -1,0 +1,54 @@
+# tool-manifest.toml — the SINGLE source of truth for the jankurai audit toolchain
+# across the whole jeryu family.
+#
+# Nothing else in the family should hardcode a jankurai rev/tag/version. Every
+# consumer (the host installer, the sandbox image, each repo's CI pin, the
+# default policy floor) is GENERATED from this file by `ops/render-tool-manifest.sh`.
+# A `--check` drift lane fails CI if any consumer has drifted from this manifest.
+#
+# To upgrade jankurai: edit [jankurai] below, run `ops/render-tool-manifest.sh`,
+# re-run `ops/install-jankurai.sh` on the host, and rebuild the agent-sandbox image.
+
+schema_version = "1"
+
+[jankurai]
+repo    = "https://github.com/neverhuman/jankurai.git"
+rev     = "68bd6114373cf407a930011b76669af306cb0cb1"
+tag     = "v1.6.10-deadlang-precision"
+version = "jankurai 1.6.10"   # exact `jankurai --version` string; the version assert greps for this
+semver  = "1.6.10"            # bare semver used in audit-policy `required_tool_version`
+
+[floors]
+# Per-profile minimum_score. Consumed by the jeryu-managed default policy
+# (policy/default-audit-policy.toml) and the merge-gate floor for repos that
+# carry no policy of their own.
+default        = 85
+"public-portal" = 75   # scripts/docs-only scaffold: product categories don't apply
+"jeryu-ci-runner" = 80 # calibrated for its size (documented in the cutover state)
+"jeryu-tool"   = 65    # the most minimal repo: manifest+scripts+docs, no product code (clean tops out at 66)
+
+[tools]
+# Default adoption mode per jankurai tool id (from TOOL_ADOPTION_CATALOG):
+#   required | advisory | disabled
+# This is the jeryu-level overlay; a repo's own agent/tool-adoption.toml may
+# raise (never silently lower) a mode. Surfaced in ~/.jeryu/settings.json [audit].
+audit-ci             = "required"
+security             = "required"
+git-bad-behavior     = "required"
+ci-bad-behavior      = "required"
+release-bad-behavior = "advisory"
+proof-routing        = "advisory"
+proofbind            = "advisory"
+proofmark-rust       = "advisory"
+copy-code            = "advisory"
+contract-drift       = "advisory"
+rust-witness         = "advisory"
+ux-qa                = "advisory"
+db-migration-analyze = "advisory"
+coverage-evidence    = "advisory"
+vibe-coverage        = "advisory"
+authz-matrix         = "advisory"
+input-boundary       = "advisory"
+agent-tool-supply    = "advisory"
+release-readiness    = "advisory"
+cost-budget          = "advisory"
