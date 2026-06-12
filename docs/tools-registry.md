@@ -45,7 +45,7 @@ jeryu-tool-finder scans all repos
 |---|---|
 | `id` | Stable kebab-case identifier, unique across the registry. |
 | `name` | Human label shown in the golden box. |
-| `kind` | One of `rust-crate`, `ts-lib`, `react-component`, `vite-plugin`, `shell-lib`. |
+| `kind` | One of `rust-crate`, `ts-lib`, `react-component`, `vite-plugin`, `shell-lib`, `jankurai-tool`. |
 | `status` | `proposed` → `building` → `published` (→ `deprecated`). |
 | `source` | Canonical home of the tool (`repo/crate` or `repo/path`). Required once `published`. |
 | `description` | What the tool is / what duplication it replaces. |

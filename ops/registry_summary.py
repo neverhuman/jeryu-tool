@@ -31,6 +31,7 @@ VALID_KINDS = {
     "react-component",
     "vite-plugin",
     "shell-lib",
+    "jankurai-tool",
 }
 VALID_TOOL_STATUS = {"proposed", "building", "published", "deprecated"}
 VALID_TASK_STATUS = {"open", "in-progress", "done"}
