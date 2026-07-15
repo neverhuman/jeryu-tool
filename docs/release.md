@@ -1,38 +1,57 @@
-# Release
+# Governed release process
 
-`neverhuman/jeryu-deploy` publishes all signed release artifacts for the family;
-`jeryu-tool` ships no binary of its own — it governs the jankurai toolchain pin.
+`jeryu-tool` ships no product binary of its own. It releases the immutable
+control-plane identity used to build and install the internal Jankurai auditor.
+The canonical repository is local-forge `jeryu/jeryu-tool`; product and public
+hub releases are separate.
 
-Version source is `VERSION` plus the split tag recorded in `repos.manifest.toml`.
-Release notes are recorded in `CHANGELOG.md`.
+`VERSION` is the repository release identity and must equal the next unused
+immutable local-forge tag. `CHANGELOG.md` carries the matching release notes.
+`tool-manifest.toml` is the sole source for Jankurai source, build, and binary
+identity.
 
 ## Release gate
 
-Before a release or split tag is promoted:
+Before the protected PR is approved or merged:
 
 - run `just fast`, `just check`, `just score`, `just security`, and `just artifact-support`
-- confirm `ops/render-tool-manifest.sh --check` is green (every family consumer
-  matches `tool-manifest.toml`)
-- confirm checksum, provenance, SBOM, and cosign evidence for any artifacts the
-  pinned jankurai version is bumped to
-- confirm backups or reproducible source inputs exist for rollback
-- confirm monitoring is active for the pinned-version rollout (the drift lane is
-  the live monitor: it fails when any consumer diverges from the manifest)
-- confirm rate limit or abuse controls are configured for public surfaces (this
-  control-plane repo exposes no public runtime surface, so this is N/A by design)
+- require the forge's `jankurai/proof` and exact-head `jeryu-tool/required`
+  checks plus one independent approval
+- qualify the exact manifest candidate only in a temporary root; its receipt
+  must say `test_mode=true`, `source.verification=diagnostic-candidate`, and
+  `governance.status=diagnostic-candidate`
+- confirm source tree/archive, Cargo.lock, Rust/Cargo/target, and binary SHA-256
+  evidence all match `tool-manifest.toml`
+- verify renderer custody, offline-fetch refusal, receipt tamper, interrupted
+  install, corrupt rollback object, restore, and wrong-identity tests
+- confirm the immutable source and prior content-addressed binary provide the
+  release backup, and that rollout monitoring is active before host install
 
-## Provenance & evidence
+After protected fast-forward merge, cut the immutable tag named by `VERSION` at
+the merged commit. Then run `ops/install-jankurai.sh` from a clean checkout of
+that exact protected main. The installer reads back immutable-main protection,
+rebuilds from the local forge with Cargo offline, verifies all pinned digests,
+atomically installs the binary, and emits the production receipt. Only after
+that receipt exists may consumer PRs require the governed host binary.
 
-The only artifact this repo governs is the jankurai binary pin in
-`tool-manifest.toml` (`repo`, `rev`, `tag`, `version`, `semver`). A pin bump is
-evidence-bearing: the rev is an immutable commit SHA, and `ops/install-jankurai.sh`
-re-verifies `jankurai --version` against the pinned `version` string before
-placing the binary at `~/.jeryu/bin/jankurai`.
+The family-wide renderer check becomes green as the protected consumer PRs
+land. It is the rollout monitor: any source, version, or digest drift fails.
+Rate limiting and abuse controls are N/A because this repository exposes no
+public runtime surface.
+
+## Provenance and evidence
+
+The installation receipt binds the local source remote, immutable Jankurai tag
+and commit, Git tree/archive and Cargo.lock checksums, Rust and Cargo versions,
+target triple, offline build mode, binary SHA-256 and version output, absolute
+installation path, previous-binary digest, and exact protected `jeryu-tool`
+manifest commit/tree/bytes. Test receipts are never release authority.
 
 ## Rollback
 
-Rollback restores the previous `[jankurai]` block in `tool-manifest.toml`, then
-re-runs `ops/render-tool-manifest.sh` (re-propagates the old pin) and
-`ops/install-jankurai.sh` (re-installs the old host binary); rebuild the agent
-sandbox image to restore its baked copy. Do not overwrite split tags — publish a
-new repair tag.
+The installer stores the previous binary under its SHA-256 and re-hashes it
+before trust. A failed post-rename transaction restores through a verified
+staging file and verifies the final target digest. A governed rollback uses a
+new protected manifest PR pinning the prior immutable Jankurai source/binary,
+then repeats render, merge, installation, and sandbox build. Never move an
+immutable tag; publish the next repair tag.

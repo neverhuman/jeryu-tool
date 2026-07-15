@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## jeryu-tool-v5.1.0-split.1 — 2026-07-15
 
 ### Added
 - New family repo `jeryu-tool`: the audit control plane.
@@ -12,3 +12,12 @@
 - `policy/default-audit-policy.toml` — fallback policy for forced scoring of
   unconfigured repos.
 - `docs/tools.md` — tool-compounding catalog and adoption guidance.
+
+### Changed
+- Governed internal Jankurai is pinned to the protected 1.6.11 correction tag,
+  exact source/build identity, and reproducible binary digest.
+- Installation now requires local-forge source, a locked offline build, exact
+  protected manifest governance, atomic replacement, verified rollback bytes,
+  and a content-addressed receipt.
+- Family rendering is explicit-worktree and custody checked; generated
+  consumers bind the complete immutable source and binary identity.
