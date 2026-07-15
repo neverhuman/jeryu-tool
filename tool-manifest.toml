@@ -6,8 +6,10 @@
 # default policy floor) is GENERATED from this file by `ops/render-tool-manifest.sh`.
 # A `--check` drift lane fails CI if any consumer has drifted from this manifest.
 #
-# To upgrade jankurai: edit [jankurai] below, run `ops/render-tool-manifest.sh`,
-# re-run `ops/install-jankurai.sh` on the host, and rebuild the agent-sandbox image.
+# To upgrade jankurai: edit [jankurai] below, render each claimed clean worktree
+# with `ops/render-tool-manifest.sh --repo NAME --repo-root NAME=/absolute/path`,
+# merge those protected PRs, then run `ops/install-jankurai.sh` from exact clean
+# protected jeryu-tool main and rebuild the agent-sandbox image.
 
 schema_version = "1"
 

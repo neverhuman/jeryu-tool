@@ -1,22 +1,30 @@
-name: ci
+name: diagnostic-mirror
 
 on:
   pull_request:
   push:
     branches: [main]
 
-# GENERATED defaults kept in lockstep with tool-manifest.toml by
-# ops/render-tool-manifest.sh (workflow JANKURAI_* rewrite rule).
+# This public mirror cannot reach the local Jeryu forge and is never a release,
+# merge, or installation authority. It runs static drift/syntax checks only.
+# GENERATED identity is still kept in lockstep with tool-manifest.toml.
 env:
+  # BEGIN GENERATED JANKURAI WORKFLOW PIN — DO NOT EDIT
   JANKURAI_REPO: "http://127.0.0.1:8787/git/jeryu/jankurai.git"
   JANKURAI_TAG: "v1.6.11-deadlang-precision-split.1"
   JANKURAI_REV: "dface7397fe24d46b0b1885ddd5782c34edbff49"
-  JANKURAI_TARGET_TRIPLE: "x86_64-unknown-linux-gnu"
-  JANKURAI_RUST_TOOLCHAIN: "1.95.0"
-  JANKURAI_BINARY_SHA256: "fdb42e5fa7d9851c0729e59bf1e582c895aa9cfc03a7175b420c6025d2fd014e"
-  JANKURAI_CARGO_LOCK_SHA256: "b9acb981c326226a687d0b6703e4f7ee303148e9e1a6dda1aa03d77988820f6a"
-  JANKURAI_SOURCE_ARCHIVE_SHA256: "2fbca5d04083e3c8d32f383d5b6b4520b8911690b26968c6fbcb210e1202b938"
+  JANKURAI_VERSION: "jankurai 1.6.11"
+  JANKURAI_SEMVER: "1.6.11"
   JANKURAI_SOURCE_TREE: "34a8a1fb59bc4ebfadf12c45d95f169d06acc781"
+  JANKURAI_SOURCE_ARCHIVE_SHA256: "2fbca5d04083e3c8d32f383d5b6b4520b8911690b26968c6fbcb210e1202b938"
+  JANKURAI_CARGO_LOCK_SHA256: "b9acb981c326226a687d0b6703e4f7ee303148e9e1a6dda1aa03d77988820f6a"
+  JANKURAI_BINARY_SHA256: "fdb42e5fa7d9851c0729e59bf1e582c895aa9cfc03a7175b420c6025d2fd014e"
+  JANKURAI_RUST_TOOLCHAIN: "1.95.0"
+  JANKURAI_RUSTC_VERSION: "rustc 1.95.0 (59807616e 2026-04-14)"
+  JANKURAI_CARGO_VERSION: "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  JANKURAI_TARGET_TRIPLE: "x86_64-unknown-linux-gnu"
+  JANKURAI_BUILD_MODE: "cargo-install-locked-offline-path-v1"
+  # END GENERATED JANKURAI WORKFLOW PIN
 
 permissions:
   contents: read
@@ -26,31 +34,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
+  static-diagnostic:
+    name: non-authoritative-static-diagnostic
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
-      - name: Verify governed jankurai
-        run: |
-          source ops/ci/lib.sh
-          require_jankurai
-      # Same lanes the proof-lanes / Justfile declare, so CI and local stay at parity.
-      - name: fast (pin drift)
+      - name: Static pin drift
         run: bash ops/ci/fast.sh
-      - name: check
-        run: bash ops/ci/check.sh
-      - name: score (jankurai audit)
-        run: bash ops/ci/score.sh
-      - name: security
-        run: bash ops/ci/security.sh
-      - name: Upload audit artifacts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ci-audit-artifacts
-          path: |
-            .jankurai/
-            target/jankurai/
-          if-no-files-found: ignore
+      - name: Shell syntax
+        run: >-
+          bash -n ops/install-jankurai.sh ops/qualify-jankurai-candidate.sh
+          ops/test-install-jankurai.sh ops/test-render-tool-manifest.sh
+          ops/ci/check.sh ops/ci/fast.sh ops/ci/lib.sh ops/ci/pr-ci.sh
+          scripts/ci-doctor.sh
+      - name: Python syntax and registry
+        run: |
+          python3 -m py_compile ops/render_tool_manifest.py ops/registry_summary.py
+          python3 ops/registry_summary.py --check

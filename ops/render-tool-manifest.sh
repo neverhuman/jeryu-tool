@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Propagate the jankurai pin from tool-manifest.toml into every family consumer.
 #
-#   ops/render-tool-manifest.sh           # rewrite consumers in place
-#   ops/render-tool-manifest.sh --check   # CI drift lane: exit 1 if any consumer drifted
+#   ops/render-tool-manifest.sh --check   # family drift lane; never writes
+#   ops/render-tool-manifest.sh --repo NAME --repo-root NAME=/absolute/path
+#                                        # explicit, custody-checked write
 #
 # Thin wrapper around render_tool_manifest.py (Python does the parsing + idempotent
 # regex rewrites; tomllib ships with python3.11+ on the family hosts/images).

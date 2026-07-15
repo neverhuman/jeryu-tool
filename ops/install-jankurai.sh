@@ -70,24 +70,87 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_TERMINAL_PROMPT=0
 export JANKURAI_NO_UPDATE_CHECK=1
 export CARGO_NET_OFFLINE=true
+export NO_PROXY="127.0.0.1,localhost,::1"
+export no_proxy="${NO_PROXY}"
 
 token_file="${JERYU_FORGE_TOKEN_FILE:-/home/ubuntu/.jeryu/secrets/merge-token}"
 [[ -r "${token_file}" ]] || die "local-forge credential is unavailable"
 forge_token="$(tr -d '\n' < "${token_file}")"
 [[ -n "${forge_token}" ]] || die "local-forge credential is empty"
+git_bin=git
+if [[ -n "${JERYU_INSTALL_TEST_GIT_BIN:-}" ]]; then
+  [[ "${test_mode}" == "1" ]] || die "a Git test double is allowed only in explicit test mode"
+  [[ -x "${JERYU_INSTALL_TEST_GIT_BIN}" ]] || die "Git test double is not executable"
+  git_bin="${JERYU_INSTALL_TEST_GIT_BIN}"
+fi
 forge_git() {
-  GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_COUNT=2 \
   GIT_CONFIG_KEY_0=http.extraHeader \
   GIT_CONFIG_VALUE_0="Authorization: Bearer ${forge_token}" \
-    git "$@"
+  GIT_CONFIG_KEY_1=http.followRedirects \
+  GIT_CONFIG_VALUE_1=false \
+    "${git_bin}" "$@"
 }
 
 mkdir -p "${install_dir}" "${receipt_dir}" "${rollback_dir}"
 
+# Bind the installation to the exact jeryu-tool manifest checkout that
+# authorized it. Production installation is permitted only from a clean local
+# checkout of the exact protected main commit, with immutable-main read back
+# from the forge. Candidate qualification records the same Git identity but is
+# explicitly diagnostic and cannot be mistaken for governed installation.
+manifest_root="$(realpath -m "${here}/..")"
+manifest_repo="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
+manifest_commit="$(git -C "${manifest_root}" rev-parse HEAD)"
+manifest_tree="$(git -C "${manifest_root}" rev-parse 'HEAD^{tree}')"
+manifest_sha256="$(sha256_file "${manifest_root}/tool-manifest.toml")"
+require_hex JERYU_TOOL_MANIFEST_COMMIT "${manifest_commit}" 40
+require_hex JERYU_TOOL_MANIFEST_TREE "${manifest_tree}" 40
+require_hex JERYU_TOOL_MANIFEST_SHA256 "${manifest_sha256}" 64
+governance_status="diagnostic-candidate"
+governance_protected_main=false
+governance_protection="not-applicable"
+if [[ "${test_mode}" != "1" ]]; then
+  [[ "$(git -C "${manifest_root}" remote get-url origin)" == "${manifest_repo}" ]] ||
+    die "jeryu-tool manifest origin is not canonical"
+  [[ -z "$(git -C "${manifest_root}" status --porcelain --untracked-files=all)" ]] ||
+    die "jeryu-tool manifest checkout must be clean for governed installation"
+  manifest_remote_main="$(forge_git ls-remote --heads "${manifest_repo}" refs/heads/main |
+    awk '$2 == "refs/heads/main" {print $1; exit}')"
+  [[ "${manifest_remote_main}" == "${manifest_commit}" ]] ||
+    die "jeryu-tool manifest checkout is not exact protected main"
+  protection_readback="$(curl -fsS --max-time 15 --max-redirs 0 --proto '=http' \
+    -H 'accept: application/json' -H "authorization: Bearer ${forge_token}" \
+    'http://127.0.0.1:8787/repos/jeryu/jeryu-tool/branches/main/protection')" ||
+    die "unable to read back jeryu-tool branch protection"
+  jq -e --arg check "jeryu-tool/required" '
+    ((if (.required_status_checks | type) == "array" then .required_status_checks
+      else (.required_status_checks.contexts // []) end | index($check)) != null)
+    and ((.required_approving_review_count //
+      .required_pull_request_reviews.required_approving_review_count // 0) >= 1)
+    and ((if (.required_linear_history | type) == "object" then
+      .required_linear_history.enabled else .required_linear_history end) == true)
+    and ((if (.enforce_admins | type) == "object" then
+      .enforce_admins.enabled else .enforce_admins end) == true)
+    and ((if (.allow_force_pushes | type) == "object" then
+      .allow_force_pushes.enabled else .allow_force_pushes end) == false)
+    and ((if (.allow_deletions | type) == "object" then
+      .allow_deletions.enabled else .allow_deletions end) == false)
+  ' <<<"${protection_readback}" >/dev/null ||
+    die "jeryu-tool protection does not satisfy immutable-main-v1"
+  governance_status="governed"
+  governance_protected_main=true
+  governance_protection="immutable-main-v1"
+fi
+
 matching_receipt() {
   local receipt expected_test=false expected_verification=release-authoritative
+  local expected_governance=governed expected_protected=true
   if [[ "${test_mode}" == "1" ]]; then
     expected_test=true
+    expected_verification=diagnostic-candidate
+    expected_governance=diagnostic-candidate
+    expected_protected=false
   fi
   if [[ "${test_mode}" == "1" && -n "${JERYU_INSTALL_TEST_PREBUILT_BINARY:-}" ]]; then
     expected_verification=test-fixture
@@ -109,6 +172,13 @@ matching_receipt() {
       --arg version "${JANKURAI_VERSION}" \
       --arg path "${target}" \
       --arg verification "${expected_verification}" \
+      --arg manifest_repo "${manifest_repo}" \
+      --arg manifest_commit "${manifest_commit}" \
+      --arg manifest_tree "${manifest_tree}" \
+      --arg manifest_sha "${manifest_sha256}" \
+      --arg governance "${expected_governance}" \
+      --arg protection "${governance_protection}" \
+      --argjson protected_main "${expected_protected}" \
       --argjson test_mode "${expected_test}" \
       '.schema == "jeryu.jankurai-installation/v1" and
        .source.remote == $remote and .source.commit == $commit and .source.tag == $tag and
@@ -120,8 +190,18 @@ matching_receipt() {
        .build.dedicated_cargo_home == true and
        .build.git_global_config_disabled == true and
        .build.git_system_config_disabled == true and
+       .build.git_http_follow_redirects == false and
        .build.git_terminal_prompt == false and
        .build.jankurai_update_check == false and
+       .build.network_scope == "local-forge-source-plus-offline-cargo" and
+       .build.no_proxy == "127.0.0.1,localhost,::1" and
+       .governance.status == $governance and
+       .governance.manifest_repo == $manifest_repo and
+       .governance.manifest_commit == $manifest_commit and
+       .governance.manifest_tree == $manifest_tree and
+       .governance.manifest_sha256 == $manifest_sha and
+       .governance.protected_main == $protected_main and
+       .governance.protection_policy == $protection and
        .binary.sha256 == $digest and
        .binary.version_output == $version and .installation.path == $path and
        .installation.atomic == true and .conclusion == "success" and
@@ -158,11 +238,17 @@ success=0
 
 rollback_target() {
   local restore="${install_dir}/.jankurai.rollback.$$"
-  if [[ -n "${previous_backup}" && -f "${previous_backup}" ]]; then
+  if [[ -n "${previous_backup}" ]]; then
+    [[ -f "${previous_backup}" && ! -L "${previous_backup}" ]] || return 1
+    [[ "$(sha256_file "${previous_backup}")" == "${previous_sha}" ]] || return 1
     cp "${previous_backup}" "${restore}"
     chmod 755 "${restore}"
+    [[ "$(sha256_file "${restore}")" == "${previous_sha}" ]] || return 1
     sync -f "${restore}"
     mv -f "${restore}" "${target}"
+    [[ -f "${target}" && ! -L "${target}" ]] || return 1
+    [[ "$(sha256_file "${target}")" == "${previous_sha}" ]] || return 1
+    [[ "$(realpath -m "${target}")" == "${target}" ]] || return 1
   else
     rm -f "${target}"
   fi
@@ -173,7 +259,8 @@ finish() {
   local status=$?
   trap - EXIT
   if [[ "${status}" -ne 0 && "${target_replaced}" -eq 1 && "${success}" -ne 1 ]]; then
-    rollback_target || true
+    rollback_target ||
+      printf 'install-jankurai: rollback verification failed; retained only verified target bytes\n' >&2
   fi
   rm -f "${stage}"
   rm -rf "${scratch}"
@@ -194,6 +281,9 @@ actual_target="$(rustc "+${JANKURAI_RUST_TOOLCHAIN}" -vV | awk '/^host:/ {print 
 
 candidate="${scratch}/out/bin/jankurai"
 source_verification="release-authoritative"
+if [[ "${test_mode}" == "1" ]]; then
+  source_verification="diagnostic-candidate"
+fi
 if [[ "${test_mode}" == "1" && -n "${JERYU_INSTALL_TEST_PREBUILT_BINARY:-}" ]]; then
   [[ -x "${JERYU_INSTALL_TEST_PREBUILT_BINARY}" ]] || die "test binary is not executable"
   mkdir -p "$(dirname "${candidate}")"
@@ -275,6 +365,10 @@ if [[ -e "${target}" ]]; then
     mv "${backup_stage}" "${previous_backup}"
     sync -f "${rollback_dir}"
   fi
+  [[ -f "${previous_backup}" && ! -L "${previous_backup}" ]] ||
+    die "rollback artifact is not a regular file"
+  [[ "$(sha256_file "${previous_backup}")" == "${previous_sha}" ]] ||
+    die "rollback artifact digest mismatch"
 fi
 
 cp "${candidate}" "${stage}"
@@ -322,13 +416,26 @@ jq -n -S \
   --arg path "${target}" \
   --arg previous_sha "${previous_sha}" \
   --arg rollback_path "${previous_backup}" \
+  --arg manifest_repo "${manifest_repo}" \
+  --arg manifest_commit "${manifest_commit}" \
+  --arg manifest_tree "${manifest_tree}" \
+  --arg manifest_sha "${manifest_sha256}" \
+  --arg governance_status "${governance_status}" \
+  --arg protection "${governance_protection}" \
+  --argjson protected_main "${governance_protected_main}" \
   --argjson test_mode "$([[ "${test_mode}" == "1" ]] && printf true || printf false)" \
   '{schema:$schema,timestamp:$timestamp,operator:$operator,run_id:$run_id,test_mode:$test_mode,
     source:{remote:$remote,commit:$commit,tag:$tag,tree:$tree,archive_sha256:$archive,
       cargo_lock_sha256:$lock,verification:$verification},
     build:{rustc:$rustc,cargo:$cargo,target_triple:$target_triple,mode:$mode,
       cargo_net_offline:true,dedicated_cargo_home:true,git_global_config_disabled:true,
-      git_system_config_disabled:true,git_terminal_prompt:false,jankurai_update_check:false},
+      git_system_config_disabled:true,git_http_follow_redirects:false,
+      git_terminal_prompt:false,jankurai_update_check:false,
+      network_scope:"local-forge-source-plus-offline-cargo",no_proxy:"127.0.0.1,localhost,::1"},
+    governance:{status:$governance_status,manifest_repo:$manifest_repo,
+      manifest_commit:$manifest_commit,manifest_tree:$manifest_tree,
+      manifest_sha256:$manifest_sha,protected_main:$protected_main,
+      protection_policy:$protection},
     binary:{sha256:$binary_sha,version_output:$version},
     installation:{path:$path,atomic:true,previous_binary_sha256:$previous_sha,
       rollback_artifact:$rollback_path},conclusion:"success"}' > "${receipt_stage}"

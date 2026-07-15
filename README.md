@@ -25,7 +25,9 @@ registry.
 | `ops/registry_summary.py` | Validates the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
 | `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
 | `ops/install-jankurai.sh` | Verifies the immutable local-forge source, builds from the lockfile offline, atomically installs `/home/ubuntu/.jeryu/bin/jankurai`, preserves rollback content, and writes a content-addressed receipt. |
-| `ops/test-install-jankurai.sh` | Proves identity-bound idempotency and safe refusal for receipt tamper, wrong digests, wrong versions, offline cache misses, interrupted installs, and rollback faults. |
+| `ops/qualify-jankurai-candidate.sh` | Builds the exact premerge candidate into a temporary root and persists a content-addressed diagnostic receipt; it can never target the governed host root. |
+| `ops/test-install-jankurai.sh` | Proves identity-bound idempotency and safe refusal for receipt tamper, external sources/redirects, wrong digests, wrong versions, offline cache misses, interrupted installs, and rollback faults. |
+| `ops/test-render-tool-manifest.sh` | Proves unscoped rendering is check-only and write mode rejects missing custody, dirty roots, wrong origins, and heads not based on current protected main. |
 | `policy/default-audit-policy.toml` | The jeryu-managed fallback policy used to force-score repos that carry no policy of their own. |
 | `generated/jankurai-pin.env` | Generated source/build/binary identity, including commit/tag/tree, archive/lock/binary digests, toolchain, target, and exact version. Do not edit by hand. |
 | `docs/tools.md` | The jankurai tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
@@ -34,13 +36,22 @@ registry.
 ## Upgrading jankurai (the whole family at once)
 
 1. Edit `[jankurai]` in `tool-manifest.toml`.
-2. `ops/render-tool-manifest.sh` — propagates the complete identity into the explicit canonical-repository allowlist (never scratch worktrees).
+2. Commit the manifest update, then run `ops/render-tool-manifest.sh --repo <name> --repo-root <name>=<clean-path>` for every explicitly claimed root. Unscoped invocation is check-only; writes require a clean canonical local-forge checkout based on current protected `main`.
 3. Land every consumer and this manifest through exact-head protected PRs, then require `ops/render-tool-manifest.sh --check` to be drift-free.
 4. Host: `ops/install-jankurai.sh` rebuilds offline and atomically installs only when source, build, binary, path, and receipt all match.
 5. Sandbox: rebuild the agent-sandbox image from the same identity and verify its baked binary digest before any network-isolated lane runs.
 
 `ops/render-tool-manifest.sh --check` fails CI if any consumer drifted from the
 manifest, so a half-done bump can never ship.
+
+The local protected PR gate may qualify an exact premerge candidate only in a
+temporary root with `test_mode=true` and a content-addressed receipt. That
+diagnostic candidate never grants installation or merge authority. Once an
+independently reviewed candidate is installed, the same gate automatically
+requires `/home/ubuntu/.jeryu/bin/jankurai` plus its production receipt (or can
+be forced fail-closed with `JERYU_TOOL_REQUIRE_GOVERNED_HOST=1`). The GitHub
+workflow is a static, non-authoritative mirror because it cannot reach the
+100%-local forge.
 
 ## Relationship to standalone jankurai
 
