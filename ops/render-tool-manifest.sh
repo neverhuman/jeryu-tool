@@ -2,7 +2,8 @@
 # Propagate the jankurai pin from tool-manifest.toml into every family consumer.
 #
 #   ops/render-tool-manifest.sh --check   # family drift lane; never writes
-#   ops/render-tool-manifest.sh --repo NAME --repo-root NAME=/absolute/path
+#   ops/render-tool-manifest.sh --repo NAME --repo-root NAME=/absolute/path \
+#     --expected-head NAME=40_HEX_SHA
 #                                        # explicit, custody-checked write
 #
 # Thin wrapper around render_tool_manifest.py (Python does the parsing + idempotent

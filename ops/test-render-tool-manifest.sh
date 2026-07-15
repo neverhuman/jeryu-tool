@@ -96,23 +96,77 @@ expect_failure "missing explicit root" "requires an explicit --repo-root" \
 canonical="http://127.0.0.1:8787/git/jeryu/jeryu.git"
 dirty="${tmp}/dirty"
 init_repo "${dirty}" "${canonical}"
+dirty_head="$(git -C "${dirty}" rev-parse HEAD)"
 printf '# dirty\n' >> "${dirty}/ops/ci/lib.sh"
 expect_failure "dirty root" "must start clean" \
-  bash "${renderer}" --repo jeryu --repo-root "jeryu=${dirty}"
+  bash "${renderer}" --repo jeryu --repo-root "jeryu=${dirty}" \
+    --expected-head "jeryu=${dirty_head}"
 
 wrong_origin="${tmp}/wrong-origin"
 init_repo "${wrong_origin}" "http://example.invalid/jeryu.git"
+wrong_origin_head="$(git -C "${wrong_origin}" rev-parse HEAD)"
 expect_failure "wrong origin" "non-canonical origin" \
-  bash "${renderer}" --repo jeryu --repo-root "jeryu=${wrong_origin}"
+  bash "${renderer}" --repo jeryu --repo-root "jeryu=${wrong_origin}" \
+    --expected-head "jeryu=${wrong_origin_head}"
 
 unrelated="${tmp}/unrelated"
 init_repo "${unrelated}" "${canonical}"
+unrelated_head="$(git -C "${unrelated}" rev-parse HEAD)"
 expect_failure "unrelated head" "not based on current protected main" \
-  bash "${renderer}" --repo jeryu --repo-root "jeryu=${unrelated}"
+  bash "${renderer}" --repo jeryu --repo-root "jeryu=${unrelated}" \
+    --expected-head "jeryu=${unrelated_head}"
+
+repo_head="$(git -C "${repo_root}" rev-parse HEAD)"
+expect_failure "missing expected head" "requires --expected-head" \
+  bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}"
+expect_failure "malformed expected head" "invalid --expected-head" \
+  bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" \
+    --expected-head "jeryu-tool=not-a-sha"
+expect_failure "duplicate expected head" "duplicate --expected-head" \
+  bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" \
+    --expected-head "jeryu-tool=${repo_head}" --expected-head "jeryu-tool=${repo_head}"
+expect_failure "unselected expected head" "without matching --repo" \
+  bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" \
+    --expected-head "jeryu=${repo_head}"
+
+# A clean canonical linear descendant is still the wrong worktree when its
+# handed-off SHA names the protected-main parent. Refuse before touching bytes.
+wrong_descendant="${tmp}/wrong-descendant"
+git clone -q "${canonical}" "${wrong_descendant}"
+git -C "${wrong_descendant}" config user.name renderer-test
+git -C "${wrong_descendant}" config user.email renderer-test@localhost
+printf 'unrelated descendant\n' > "${wrong_descendant}/wrong-descendant.txt"
+git -C "${wrong_descendant}" add wrong-descendant.txt
+git -C "${wrong_descendant}" commit -q -m 'unrelated descendant'
+handed_off_head="$(git -C "${wrong_descendant}" rev-parse HEAD^)"
+descendant_before="$(sha256sum "${wrong_descendant}/ops/ci/lib.sh" | awk '{print $1}')"
+expect_failure "wrong clean descendant" "write root HEAD mismatch" \
+  bash "${renderer}" --repo jeryu --repo-root "jeryu=${wrong_descendant}" \
+    --expected-head "jeryu=${handed_off_head}"
+descendant_after="$(sha256sum "${wrong_descendant}/ops/ci/lib.sh" | awk '{print $1}')"
+[[ "${descendant_before}" == "${descendant_after}" ]] ||
+  fail "HEAD mismatch mutated the consumer before refusal"
+
+# A consumer-only write cannot repair or otherwise touch the renderer owner's
+# generated env as an implicit side effect.
+renderer_fixture="${tmp}/renderer-owner"
+mkdir -p "${renderer_fixture}/ops" "${renderer_fixture}/generated"
+cp "${here}/render-tool-manifest.sh" "${renderer_fixture}/ops/"
+cp "${here}/render_tool_manifest.py" "${renderer_fixture}/ops/"
+cp "${repo_root}/tool-manifest.toml" "${renderer_fixture}/"
+printf 'deliberately stale owner pin\n' > "${renderer_fixture}/generated/jankurai-pin.env"
+scoped_consumer="${tmp}/scoped-consumer"
+git clone -q "${canonical}" "${scoped_consumer}"
+scoped_head="$(git -C "${scoped_consumer}" rev-parse HEAD)"
+bash "${renderer_fixture}/ops/render-tool-manifest.sh" --repo jeryu \
+  --repo-root "jeryu=${scoped_consumer}" --expected-head "jeryu=${scoped_head}" >/dev/null
+[[ "$(cat "${renderer_fixture}/generated/jankurai-pin.env")" == \
+  "deliberately stale owner pin" ]] || fail "consumer render mutated manifest-owner pin"
 
 # The exact clean manifest-owner checkout is a valid explicit no-op write root.
-bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" >/dev/null
+bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" \
+  --expected-head "jeryu-tool=${repo_head}" >/dev/null
 [[ -z "$(git -C "${repo_root}" status --porcelain --untracked-files=all)" ]] ||
   fail "validated no-op render dirtied the manifest-owner checkout"
 
-printf 'render-tool-manifest tests passed: keyed-future unscoped missing-root dirty origin ancestry success\n'
+printf 'render-tool-manifest tests passed: keyed-future custody exact-head scope success\n'

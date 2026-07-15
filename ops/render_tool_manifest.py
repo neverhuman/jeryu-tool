@@ -519,7 +519,7 @@ def git_output(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def validate_write_root(name: str, root: Path) -> None:
+def validate_write_root(name: str, root: Path, expected_head: str) -> None:
     status = git_output(root, "status", "--porcelain", "--untracked-files=all")
     if status:
         raise SystemExit(f"renderer write root must start clean: {name}={root}")
@@ -535,6 +535,10 @@ def validate_write_root(name: str, root: Path) -> None:
         raise SystemExit(f"renderer could not resolve protected main for {name}")
     remote_main = fields[0]
     head = git_output(root, "rev-parse", "HEAD")
+    if head != expected_head:
+        raise SystemExit(
+            f"renderer write root HEAD mismatch: {name} expected={expected_head} actual={head}"
+        )
     ancestry = subprocess.run(
         ["git", "-C", str(root), "merge-base", "--is-ancestor", remote_main, head],
         check=False,
@@ -594,6 +598,13 @@ def parse_args() -> argparse.Namespace:
         metavar="NAME=PATH",
         help="explicit clean worktree for one selected canonical repository",
     )
+    parser.add_argument(
+        "--expected-head",
+        action="append",
+        default=[],
+        metavar="NAME=40_HEX_SHA",
+        help="exact handed-off HEAD required for one selected write root",
+    )
     parser.add_argument("--family-root", type=Path, default=default_family_root())
     return parser.parse_args()
 
@@ -603,7 +614,8 @@ def main() -> int:
     if not args.repo and not args.check:
         args.check = True
         print(
-            "unscoped renderer invocation is check-only; pass --repo and --repo-root for writes",
+            "unscoped renderer invocation is check-only; pass --repo, --repo-root, and "
+            "--expected-head for writes",
             file=sys.stderr,
         )
     pin = load_pin()
@@ -627,18 +639,51 @@ def main() -> int:
                 "renderer write mode requires an explicit --repo-root for every selected repo: "
                 f"{sorted(missing_overrides)}"
             )
+        expected_heads: dict[str, str] = {}
+        for value in args.expected_head:
+            name, separator, head = value.partition("=")
+            if (
+                separator != "="
+                or name not in CANONICAL_REPOS
+                or not re.fullmatch(r"[0-9a-f]{40}", head)
+            ):
+                raise SystemExit(
+                    f"invalid --expected-head {value!r}; expected canonical-name=40-hex-sha"
+                )
+            if name in expected_heads:
+                raise SystemExit(f"duplicate --expected-head for {name}")
+            expected_heads[name] = head
+        unexpected_heads = set(expected_heads).difference(repos)
+        if unexpected_heads:
+            raise SystemExit(f"--expected-head without matching --repo: {sorted(unexpected_heads)}")
+        missing_heads = set(repos).difference(expected_heads)
+        if missing_heads:
+            raise SystemExit(
+                "renderer write mode requires --expected-head for every selected repo: "
+                f"{sorted(missing_heads)}"
+            )
         for name in repos:
-            validate_write_root(name, overrides[name])
+            validate_write_root(name, overrides[name], expected_heads[name])
+    elif args.expected_head:
+        raise SystemExit("--expected-head is valid only in explicit write mode")
     changed: list[Path] = []
 
-    env_path = REPO_ROOT / "generated" / "jankurai-pin.env"
-    expected_env = pin_env_text(pin)
-    current_env = env_path.read_text() if env_path.exists() else None
-    if current_env != expected_env:
-        changed.append(env_path)
-        if not args.check:
-            env_path.parent.mkdir(parents=True, exist_ok=True)
-            env_path.write_text(expected_env)
+    # The generated pin belongs only to the selected, custody-validated
+    # manifest-owner root. A consumer-only render must never mutate the
+    # renderer's own checkout as an implicit side effect.
+    if "jeryu-tool" in repos:
+        env_path = (
+            repo_root(args.family_root.resolve(), "jeryu-tool", overrides)
+            / "generated"
+            / "jankurai-pin.env"
+        )
+        expected_env = pin_env_text(pin)
+        current_env = env_path.read_text() if env_path.exists() else None
+        if current_env != expected_env:
+            changed.append(env_path)
+            if not args.check:
+                env_path.parent.mkdir(parents=True, exist_ok=True)
+                env_path.write_text(expected_env)
 
     for path in consumer_paths(args.family_root.resolve(), repos, overrides):
         original = path.read_text()
