@@ -19,23 +19,25 @@ registry.
 
 | Path | Purpose |
 |---|---|
-| `tool-manifest.toml` | **Audit source of truth**: jankurai `{repo, rev, tag, version, semver}`, per-profile score floors, per-tool default modes. |
+| `tool-manifest.toml` | **Audit source of truth**: local-forge commit/tag, source tree/archive and lock digests, exact version, reproducible build environment, binary digest, per-profile score floors, and per-tool default modes. |
 | `tools-registry.toml` | **Registry source of truth**: one `[[tool]]` per reusable tool — kind, status, adopting/candidate repos, realized + anticipated LOC saved. |
 | `tasks/NNNN-*.toml` | Reusable-tool **build queue**: build-this-tool / migrate-these-repos work items. |
 | `ops/registry_summary.py` | Validates the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
 | `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
-| `ops/install-jankurai.sh` | Installs the jeryu-owned, pinned binary to `~/.jeryu/bin/jankurai` (the host global). |
+| `ops/install-jankurai.sh` | Verifies the immutable local-forge source, builds from the lockfile offline, atomically installs `/home/ubuntu/.jeryu/bin/jankurai`, preserves rollback content, and writes a content-addressed receipt. |
+| `ops/test-install-jankurai.sh` | Proves identity-bound idempotency and safe refusal for receipt tamper, wrong digests, wrong versions, offline cache misses, interrupted installs, and rollback faults. |
 | `policy/default-audit-policy.toml` | The jeryu-managed fallback policy used to force-score repos that carry no policy of their own. |
-| `generated/jankurai-pin.env` | Generated sourced env (`JANKURAI_REPO/TAG/REV/VERSION/SEMVER`). Do not edit by hand. |
+| `generated/jankurai-pin.env` | Generated source/build/binary identity, including commit/tag/tree, archive/lock/binary digests, toolchain, target, and exact version. Do not edit by hand. |
 | `docs/tools.md` | The jankurai tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
 | `docs/tools-registry.md` | The reusable-tool registry schema, lifecycle, and LOC-saved definition. |
 
 ## Upgrading jankurai (the whole family at once)
 
 1. Edit `[jankurai]` in `tool-manifest.toml`.
-2. `ops/render-tool-manifest.sh` — propagates into all ~40 consumer sites.
-3. Host: `ops/install-jankurai.sh` re-installs `~/.jeryu/bin/jankurai`.
-4. Sandbox: rebuild the agent-sandbox image (it bakes the auditor; it is `--network none`).
+2. `ops/render-tool-manifest.sh` — propagates the complete identity into the explicit canonical-repository allowlist (never scratch worktrees).
+3. Land every consumer and this manifest through exact-head protected PRs, then require `ops/render-tool-manifest.sh --check` to be drift-free.
+4. Host: `ops/install-jankurai.sh` rebuilds offline and atomically installs only when source, build, binary, path, and receipt all match.
+5. Sandbox: rebuild the agent-sandbox image from the same identity and verify its baked binary digest before any network-isolated lane runs.
 
 `ops/render-tool-manifest.sh --check` fails CI if any consumer drifted from the
 manifest, so a half-done bump can never ship.

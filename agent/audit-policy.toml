@@ -13,7 +13,7 @@ workspace = "jeryu-tool"
 minimum_score = 65
 hard_findings_allowed = 0
 required_tool = "jankurai"
-required_tool_version = "1.6.10"
+required_tool_version = "1.6.11"
 
 [scan]
 excluded_paths = [

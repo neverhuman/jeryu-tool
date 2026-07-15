@@ -19,6 +19,7 @@ golden box on `/repos` reads the registry via `GET /api/v1/tools/registry/summar
 
 Keep this repo lightweight: manifests, generators, installer, default policy,
 the registry, and docs only — no product code (Python is allowed under `ops/`).
-The auditor binary lives in `neverhuman/jankurai`; reusable tools live in their
-canonical home repos; enforcement runtime lives in the consuming repos (forge in
+The governed auditor source lives in the local-forge `jeryu/jankurai` repository;
+the separate public hub release is not the Jeryu CI authority. Reusable tools live
+in their canonical home repos; enforcement runtime lives in the consuming repos (forge in
 jeryu-core/jeryu-deploy, guard in jeryu-release-ops, sandbox in jeryu-ci-runner).

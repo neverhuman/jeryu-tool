@@ -15,7 +15,7 @@ workspace = "unconfigured"
 minimum_score = 85          # [floors].default; the merge-gate floor for unconfigured repos
 hard_findings_allowed = 0
 required_tool = "jankurai"
-required_tool_version = "1.6.10"
+required_tool_version = "1.6.11"
 
 [scan]
 # The auditor's own output is circular; the built SPA bundle is generated, not authored.

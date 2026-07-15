@@ -12,11 +12,20 @@
 schema_version = "1"
 
 [jankurai]
-repo    = "https://github.com/neverhuman/jankurai.git"
-rev     = "68bd6114373cf407a930011b76669af306cb0cb1"
-tag     = "v1.6.10-deadlang-precision"
-version = "jankurai 1.6.10"   # exact `jankurai --version` string; the version assert greps for this
-semver  = "1.6.10"            # bare semver used in audit-policy `required_tool_version`
+repo                  = "http://127.0.0.1:8787/git/jeryu/jankurai.git"
+rev                   = "dface7397fe24d46b0b1885ddd5782c34edbff49"
+tag                   = "v1.6.11-deadlang-precision-split.1"
+version               = "jankurai 1.6.11"
+semver                = "1.6.11"
+source_tree           = "34a8a1fb59bc4ebfadf12c45d95f169d06acc781"
+source_archive_sha256 = "2fbca5d04083e3c8d32f383d5b6b4520b8911690b26968c6fbcb210e1202b938"
+cargo_lock_sha256     = "b9acb981c326226a687d0b6703e4f7ee303148e9e1a6dda1aa03d77988820f6a"
+binary_sha256         = "fdb42e5fa7d9851c0729e59bf1e582c895aa9cfc03a7175b420c6025d2fd014e"
+rust_toolchain        = "1.95.0"
+rustc_version         = "rustc 1.95.0 (59807616e 2026-04-14)"
+cargo_version         = "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+target_triple         = "x86_64-unknown-linux-gnu"
+build_mode            = "cargo-install-locked-offline-path-v1"
 
 [floors]
 # Per-profile minimum_score. Consumed by the jeryu-managed default policy
