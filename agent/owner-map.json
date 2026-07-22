@@ -26,7 +26,8 @@
     "tool-manifest.toml": "audit",
     "tools-registry.toml": "registry",
     "tasks/": "registry",
-    "tasks/**": "registry"
+    "tasks/**": "registry",
+    "tools/": "ops"
   },
   "workspace": "jeryu-tool"
 }

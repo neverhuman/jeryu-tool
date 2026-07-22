@@ -16,6 +16,11 @@ for path in "${required[@]}"; do
   [[ -s "$path" ]] || { printf 'missing split metadata: %s\n' "$path" >&2; exit 1; }
 done
 mkdir -p .jankurai target/jankurai
+jankurai security run . \
+  --strict \
+  --profile ci \
+  --script tools/security-lane.sh \
+  --out target/jankurai/security/evidence.json
 jankurai audit . --full --mode advisory --policy agent/audit-policy.toml --json .jankurai/repo-score.json --md .jankurai/repo-score.md
 python3 - <<'PY'
 import json

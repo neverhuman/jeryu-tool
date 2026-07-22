@@ -35,4 +35,5 @@ for script in ops/*.sh ops/ci/*.sh; do
   [[ -e "$script" ]] || continue
   bash -n "$script"
 done
+bash ops/test-doctor-controls.sh
 printf 'check ok: %s\n' "$(pwd)"

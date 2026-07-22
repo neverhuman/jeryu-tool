@@ -75,6 +75,11 @@
       "lane": "fast",
       "purpose": "verify every family consumer matches the single source of truth"
     },
+    "tools/": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "prove the canonical security wrapper passes and propagates hostile failure"
+    },
     "tools-registry.toml": {
       "command": "just check",
       "lane": "check",
