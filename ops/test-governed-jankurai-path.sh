@@ -5,11 +5,24 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_lib="${here}/ci/lib.sh"
 production_broker="/opt/jain-ci/authority/release-bin/jankurai"
+production_governed="/home/ubuntu/.jeryu/bin/jankurai"
 tmp="$(mktemp -d /tmp/test-governed-jankurai-path.XXXXXX)"
+source_verifier="${tmp}/ensure-jankurai.sh"
 cleanup() {
   rm -rf -- "${tmp}"
 }
 trap cleanup EXIT
+
+RENDERER_PY="${here}/render_tool_manifest.py" python3 - <<'PY' >"${source_verifier}"
+import importlib.util
+import os
+
+spec = importlib.util.spec_from_file_location("render_tool_manifest", os.environ["RENDERER_PY"])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+print(module.ensure_script_text(module.load_pin()), end="")
+PY
 
 fail() {
   printf 'test-governed-jankurai-path: %s\n' "$*" >&2
@@ -28,17 +41,22 @@ expect_failure() {
   }
 }
 
-grep -Fq "${production_broker}" "${source_lib}" ||
-  fail "release broker path contract is absent"
-grep -Fq 'local mode=receipt-bound' "${source_lib}" ||
-  fail "release broker mode is absent"
+for source in "${source_lib}" "${source_verifier}"; do
+  grep -Fq "${production_broker}" "${source}" ||
+    fail "release broker path contract is absent from ${source}"
+  grep -Fq 'local mode=receipt-bound' "${source}" ||
+    fail "release broker mode is absent from ${source}"
+  grep -Fq "${production_governed}" "${source}" ||
+    fail "ordinary governed path contract is absent from ${source}"
+done
 if grep -Eq '/home/ubuntu/\.jeryu/bin/jankurai|JERYU_JANKURAI_BIN:-' \
   "${here}/ci/pr-ci.sh"; then
   fail "PR gate still selects an ambient-home or caller-provided auditor"
 fi
 
 mkdir -p "${tmp}/broker/bin" "${tmp}/attacker/bin" \
-  "${tmp}/home/.jeryu/bin"
+  "${tmp}/home/.jeryu/bin" "${tmp}/home/.jeryu/receipts/jankurai/sha256" \
+  "${tmp}/home/.local/bin"
 governed_source="/usr/local/libexec/jain/jankurai"
 if [[ ! -x "${governed_source}" ]]; then
   governed_source="$(command -v jankurai 2>/dev/null || true)"
@@ -55,16 +73,79 @@ fi
 broker_bin="${tmp}/broker/bin/jankurai"
 attacker_bin="${tmp}/attacker/bin/jankurai"
 ambient_bin="${tmp}/home/.jeryu/bin/jankurai"
+older_local_bin="${tmp}/home/.local/bin/jankurai"
 cp -- "${governed_source}" "${broker_bin}"
 cp -- "${governed_source}" "${attacker_bin}"
 cp -- "${governed_source}" "${ambient_bin}"
 chmod 0555 "${broker_bin}" "${attacker_bin}" "${ambient_bin}"
+printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${older_local_bin}"
+chmod 0555 "${older_local_bin}"
+
+# Bind the private ordinary-mode fixture to a release-authoritative receipt.
+# The content-addressed filename is the receipt's own digest.
+# shellcheck source=ops/ci/lib.sh
+source "${source_lib}"
+ordinary_receipt_tmp="${tmp}/ordinary-receipt.json"
+jq -n \
+  --arg remote "${JERYU_JANKURAI_SOURCE_REPO}" \
+  --arg commit "${JERYU_JANKURAI_SOURCE_REV}" \
+  --arg tag "${JERYU_JANKURAI_SOURCE_TAG}" \
+  --arg tree "${JERYU_JANKURAI_SOURCE_TREE}" \
+  --arg archive "${JERYU_JANKURAI_SOURCE_ARCHIVE_SHA256}" \
+  --arg lock "${JERYU_JANKURAI_CARGO_LOCK_SHA256}" \
+  --arg rustc "${JERYU_JANKURAI_RUSTC_VERSION}" \
+  --arg cargo "${JERYU_JANKURAI_CARGO_VERSION}" \
+  --arg triple "${JERYU_JANKURAI_TARGET_TRIPLE}" \
+  --arg mode "${JERYU_JANKURAI_BUILD_MODE}" \
+  --arg digest "${JERYU_JANKURAI_SHA256}" \
+  --arg version "${JERYU_JANKURAI_VERSION}" \
+  --arg path "${ambient_bin}" \
+  '{schema:"jeryu.jankurai-installation/v1",
+    source:{remote:$remote,commit:$commit,tag:$tag,tree:$tree,
+      archive_sha256:$archive,cargo_lock_sha256:$lock,
+      verification:"release-authoritative"},
+    build:{rustc:$rustc,cargo:$cargo,target_triple:$triple,mode:$mode,
+      cargo_net_offline:true,dedicated_cargo_home:true,
+      git_global_config_disabled:true,git_system_config_disabled:true,
+      git_http_follow_redirects:false,git_terminal_prompt:false,
+      jankurai_update_check:false,
+      network_scope:"local-forge-source-plus-offline-cargo",
+      no_proxy:"127.0.0.1,localhost,::1"},
+    governance:{status:"governed",
+      manifest_repo:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+      manifest_commit:("a"*40),manifest_tree:("b"*40),
+      manifest_sha256:("c"*64),protected_main:true,
+      protection_policy:"immutable-main-v1"},
+    binary:{sha256:$digest,version_output:$version},
+    installation:{path:$path,atomic:true},test_mode:false,
+    conclusion:"success"}' >"${ordinary_receipt_tmp}"
+ordinary_receipt_sha="$(sha256sum "${ordinary_receipt_tmp}" | awk '{print $1}')"
+mv -- "${ordinary_receipt_tmp}" \
+  "${tmp}/home/.jeryu/receipts/jankurai/sha256/${ordinary_receipt_sha}.json"
 
 # Exercise the exact production logic without requiring write access beneath
 # /opt: only this automatically removed test copy substitutes the fixed broker
 # path, while every other byte remains the reviewed source.
 test_lib="${tmp}/lib.sh"
-sed "s#${production_broker}#${broker_bin}#g" "${source_lib}" >"${test_lib}"
+sed -e "s#${production_broker}#${broker_bin}#g" \
+  -e "s#${production_governed}#${ambient_bin}#g" \
+  "${source_lib}" >"${test_lib}"
+test_verifier="${tmp}/test-ensure-jankurai.sh"
+sed -e "s#${production_broker}#${broker_bin}#g" \
+  -e "s#${production_governed}#${ambient_bin}#g" \
+  "${source_verifier}" >"${test_verifier}"
+
+# Ordinary mode ignores the older ~/.local/bin candidate, selects the governed
+# installation, and proves its release-authoritative receipt.
+# The child shell expands its positional inputs.
+# shellcheck disable=SC2016
+ordinary_command='source "$1"; require_jankurai; [[ "$JERYU_GOVERNED_JANKURAI_BIN" == "$2" ]]'
+env -i HOME="${tmp}/home" \
+  PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
+  bash -c "${ordinary_command}" bash "${test_lib}" "${ambient_bin}"
+env -i HOME="${tmp}/home" \
+  PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
+  bash "${test_verifier}" >/dev/null
 
 run_release_broker() {
   local path="$1"
@@ -80,6 +161,8 @@ run_release_broker() {
 }
 
 run_release_broker "${tmp}/broker/bin"
+env -i HOME="${tmp}/home" PATH="${tmp}/broker/bin:/usr/bin:/bin" \
+  JAIN_RELEASE_CI=1 bash "${test_verifier}" >/dev/null
 
 # Caller substitutions never select the auditor: the broker-controlled PATH and
 # fixed authority path remain decisive.
@@ -106,6 +189,7 @@ printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${broker_bin}"
 chmod 0555 "${broker_bin}"
 expect_failure "wrong broker binary" "governed jankurai identity mismatch" \
   run_release_broker "${tmp}/broker/bin"
+rm -f -- "${broker_bin}"
 mv -- "${tmp}/governed-backup" "${broker_bin}"
 chmod 0555 "${broker_bin}"
 

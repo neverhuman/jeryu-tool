@@ -58,10 +58,13 @@ pin = module.load_pin()
 root = Path(os.environ["TEST_TMP"])
 shell_pin = module.shell_pin_block(pin)
 require_jankurai = module.require_jankurai_function()
+ensure_script = module.ensure_script_text(pin)
 assert "JERYU_GOVERNED_JANKURAI_BIN" not in shell_pin
 assert "/home/ubuntu/.jeryu/bin/jankurai" not in shell_pin
 assert "/opt/jain-ci/authority/release-bin/jankurai" in require_jankurai
+assert "/home/ubuntu/.jeryu/bin/jankurai" in require_jankurai
 assert "local mode=receipt-bound" in require_jankurai
+assert require_jankurai in ensure_script
 workflow = root / ".github" / "workflows" / "future.yml"
 workflow.parent.mkdir(parents=True)
 workflow.write_text(
