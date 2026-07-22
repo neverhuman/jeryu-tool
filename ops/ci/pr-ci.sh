@@ -5,7 +5,6 @@
 set -euo pipefail
 
 # BEGIN GENERATED JANKURAI PIN — DO NOT EDIT
-export JERYU_GOVERNED_JANKURAI_BIN="${JERYU_JANKURAI_BIN:-/home/ubuntu/.jeryu/bin/jankurai}"
 export JERYU_JANKURAI_SOURCE_REPO="http://127.0.0.1:8787/git/jeryu/jankurai.git"
 export JERYU_JANKURAI_VERSION="jankurai 1.6.11"
 export JERYU_JANKURAI_SHA256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
@@ -24,13 +23,13 @@ export JERYU_JANKURAI_BUILD_MODE="cargo-install-locked-offline-path-v1"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-# A premerge manifest PR may qualify its exact pinned candidate in /tmp, with a
-# content-addressed diagnostic receipt, without mutating the governed host path.
-# Once the reviewed candidate has been installed, the exact-head required run
-# automatically selects /home/ubuntu/.jeryu and requires a production receipt.
+# Release-full CI accepts only the root broker's fixed, PATH-selected auditor.
+# A local premerge manifest PR may instead qualify its exact pinned candidate in
+# /tmp, with a content-addressed diagnostic receipt, without granting release
+# authority or mutating an installed auditor.
 unset JERYU_GOVERNED_JANKURAI_BIN JERYU_JANKURAI_BIN JERYU_JANKURAI_RECEIPT \
   JERYU_JANKURAI_RECEIPT_SHA256 JERYU_JANKURAI_ALLOW_TEST_RECEIPT
-host_bin="/home/ubuntu/.jeryu/bin/jankurai"
+host_bin="$(command -v jankurai 2>/dev/null || true)"
 host_version=""
 host_sha=""
 if [[ -f "${host_bin}" && ! -L "${host_bin}" ]]; then
@@ -38,12 +37,15 @@ if [[ -f "${host_bin}" && ! -L "${host_bin}" ]]; then
   host_sha="$(sha256sum "${host_bin}" 2>/dev/null | awk '{print $1}' || true)"
 fi
 candidate_root=""
-if [[ "${host_version}" == "${JERYU_JANKURAI_VERSION}" &&
-      "${host_sha}" == "${JERYU_JANKURAI_SHA256}" ]]; then
-  export JERYU_JANKURAI_BIN="${host_bin}"
+if [[ "${JAIN_RELEASE_CI:-0}" == "1" ]]; then
   source ops/ci/lib.sh
   require_jankurai
-  qualification_mode="governed-host"
+  qualification_mode="release-broker"
+elif [[ "${host_version}" == "${JERYU_JANKURAI_VERSION}" &&
+        "${host_sha}" == "${JERYU_JANKURAI_SHA256}" ]]; then
+  source ops/ci/lib.sh
+  require_jankurai
+  qualification_mode="receipt-bound-host"
 else
   if [[ "${JERYU_TOOL_REQUIRE_GOVERNED_HOST:-0}" == "1" ]]; then
     printf 'governed-host Jankurai required: version=%s sha256=%s\n' \
@@ -63,13 +65,17 @@ else
   }
   # shellcheck source=/dev/null
   source "${candidate_envs[0]}"
+  candidate_bin="${JERYU_JANKURAI_BIN:?candidate qualification did not select Jankurai}"
+  candidate_bin_dir="$(dirname "${candidate_bin}")"
+  export PATH="${candidate_bin_dir}:${PATH}"
   source ops/ci/lib.sh
   require_jankurai
   qualification_mode="premerge-candidate"
 fi
-printf '[pr-ci] jankurai mode=%s receipt=%s receipt_sha256=%s\n' \
-  "${qualification_mode}" "${JERYU_JANKURAI_RECEIPT}" \
-  "${JERYU_JANKURAI_RECEIPT_SHA256}" >&2
+printf '[pr-ci] jankurai mode=%s bin=%s receipt=%s receipt_sha256=%s\n' \
+  "${qualification_mode}" "${JERYU_GOVERNED_JANKURAI_BIN}" \
+  "${JERYU_JANKURAI_RECEIPT:-not-product-visible}" \
+  "${JERYU_JANKURAI_RECEIPT_SHA256:-not-product-visible}" >&2
 
 # The manifest PR proves its own generated consumers first. After each protected
 # consumer lands, the release lane runs the unscoped family check over canonical mains.

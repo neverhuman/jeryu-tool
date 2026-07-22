@@ -56,6 +56,12 @@ assert spec.loader is not None
 spec.loader.exec_module(module)
 pin = module.load_pin()
 root = Path(os.environ["TEST_TMP"])
+shell_pin = module.shell_pin_block(pin)
+require_jankurai = module.require_jankurai_function()
+assert "JERYU_GOVERNED_JANKURAI_BIN" not in shell_pin
+assert "/home/ubuntu/.jeryu/bin/jankurai" not in shell_pin
+assert "/opt/jain-ci/authority/release-bin/jankurai" in require_jankurai
+assert "local mode=receipt-bound" in require_jankurai
 workflow = root / ".github" / "workflows" / "future.yml"
 workflow.parent.mkdir(parents=True)
 workflow.write_text(

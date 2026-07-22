@@ -115,7 +115,6 @@ def shell_pin_block(pin: dict[str, str]) -> str:
     return "\n".join(
         (
             PIN_MARKER_BEGIN,
-            'export JERYU_GOVERNED_JANKURAI_BIN="${JERYU_JANKURAI_BIN:-/home/ubuntu/.jeryu/bin/jankurai}"',
             f'export JERYU_JANKURAI_SOURCE_REPO="{pin["repo"]}"',
             f'export JERYU_JANKURAI_VERSION="{pin["version"]}"',
             f'export JERYU_JANKURAI_SHA256="{pin["binary_sha256"]}"',
@@ -136,12 +135,23 @@ def shell_pin_block(pin: dict[str, str]) -> str:
 
 def require_jankurai_function() -> str:
     return r'''require_jankurai() {
-  local bin="${JERYU_GOVERNED_JANKURAI_BIN}"
-  local bin_dir normalized resolved actual actual_sha receipt receipt_digest receipt_sha
+  local mode=receipt-bound
+  local expected_broker="/opt/jain-ci/authority/release-bin/jankurai"
+  local bin normalized resolved actual actual_sha receipt receipt_digest receipt_sha install_root
   local expected_test=false expected_verification=release-authoritative
   local expected_governance=governed expected_protected=true
   local expected_protection=immutable-main-v1 found_receipt=0
   local -a receipt_candidates=()
+  resolved="$(command -v jankurai 2>/dev/null || true)"
+  if [[ "${JAIN_RELEASE_CI:-0}" == "1" ]]; then
+    mode=release-broker
+    if [[ "${resolved}" != "${expected_broker}" ]]; then
+      printf 'release broker Jankurai path mismatch: expected %s, resolved %s\n' \
+        "${expected_broker}" "${resolved:-missing}" >&2
+      exit 1
+    fi
+  fi
+  bin="${resolved}"
   if [[ "${bin}" != /* || ! -f "${bin}" || -L "${bin}" || ! -x "${bin}" ]]; then
     printf 'governed jankurai must be an absolute executable regular file: %s\n' "${bin}" >&2
     exit 1
@@ -151,11 +161,10 @@ def require_jankurai_function() -> str:
     printf 'governed jankurai path traverses a symlink: %s -> %s\n' "${bin}" "${normalized}" >&2
     exit 1
   fi
-  bin_dir="$(dirname "${bin}")"
-  export PATH="${bin_dir}:${PATH}"
-  resolved="$(command -v jankurai 2>/dev/null || true)"
-  if [[ "${resolved}" != "${bin}" ]]; then
-    printf 'governed jankurai shadowed: expected %s, resolved %s\n' "${bin}" "${resolved:-missing}" >&2
+  if [[ "${mode}" == "release-broker" &&
+        "$(stat -c '%a:%h' -- "${bin}" 2>/dev/null || true)" != "555:1" ]]; then
+    printf 'release broker Jankurai custody mismatch: expected mode 0555 and one link at %s\n' \
+      "${bin}" >&2
     exit 1
   fi
   actual="$("${bin}" --version 2>/dev/null || true)"
@@ -166,20 +175,29 @@ def require_jankurai_function() -> str:
       "${bin}" "${actual:-missing}" "${actual_sha:-missing}" >&2
     exit 1
   fi
-  if [[ "${JERYU_JANKURAI_ALLOW_TEST_RECEIPT:-0}" == "1" ]]; then
+  export JERYU_GOVERNED_JANKURAI_BIN="${bin}"
+  if [[ "${mode}" == "release-broker" ]]; then
+    if [[ -n "${JERYU_JANKURAI_RECEIPT:-}" ||
+          -n "${JERYU_JANKURAI_RECEIPT_SHA256:-}" ||
+          "${JERYU_JANKURAI_ALLOW_TEST_RECEIPT:-0}" != "0" ]]; then
+      printf 'release broker Jankurai rejects caller receipt authority\n' >&2
+      exit 1
+    fi
+    found_receipt=1
+  elif [[ "${JERYU_JANKURAI_ALLOW_TEST_RECEIPT:-0}" == "1" ]]; then
     expected_test=true
     expected_verification=diagnostic-candidate
     expected_governance=diagnostic-candidate
     expected_protected=false
     expected_protection=not-applicable
   fi
-  if [[ -n "${JERYU_JANKURAI_RECEIPT:-}" ]]; then
+  if [[ "${mode}" == "release-broker" ]]; then
+    receipt_candidates=()
+  elif [[ -n "${JERYU_JANKURAI_RECEIPT:-}" ]]; then
     receipt_candidates=("${JERYU_JANKURAI_RECEIPT}")
-  elif [[ "${bin}" == "/home/ubuntu/.jeryu/bin/jankurai" ]]; then
-    receipt_candidates=(/home/ubuntu/.jeryu/receipts/jankurai/sha256/*.json)
   else
-    printf 'non-governed jankurai requires an explicit installation receipt: %s\n' "${bin}" >&2
-    exit 1
+    install_root="$(dirname "$(dirname "${bin}")")"
+    receipt_candidates=("${install_root}"/receipts/jankurai/sha256/*.json)
   fi
   for receipt in "${receipt_candidates[@]}"; do
     [[ -f "${receipt}" ]] || continue
@@ -235,7 +253,7 @@ def require_jankurai_function() -> str:
       break
     fi
   done
-  if [[ "${found_receipt}" -ne 1 ]]; then
+  if [[ "${mode}" != "release-broker" && "${found_receipt}" -ne 1 ]]; then
     printf 'governed jankurai receipt mismatch: binary=%s test_mode=%s\n' \
       "${bin}" "${expected_test}" >&2
     exit 1
@@ -424,7 +442,7 @@ def render_consumer(path: Path, pin: dict[str, str]) -> str:
             text,
         )
         text = re.sub(r'(?m)^export PATH="\$\{CARGO_HOME:-\$HOME/\.cargo\}/bin:\$PATH"\n?', "", text)
-        if "require_jankurai\n" not in text:
+        if not re.search(r"(?m)^\s*require_jankurai(?:\s|$)", text):
             text = text.replace(
                 'cd "$repo_root"\n',
                 'cd "$repo_root"\n\n'

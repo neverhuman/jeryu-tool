@@ -26,6 +26,7 @@ PY
 bash ops/render-tool-manifest.sh --check --repo jeryu-tool
 bash ops/test-install-jankurai.sh
 bash ops/test-render-tool-manifest.sh
+bash ops/test-governed-jankurai-path.sh
 
 # Reusable-tool registry: parse + validate tools-registry.toml and tasks/.
 python3 ops/registry_summary.py --check
