@@ -191,10 +191,18 @@ bash "${renderer_fixture}/ops/render-tool-manifest.sh" --repo jeryu \
 [[ "$(cat "${renderer_fixture}/generated/jankurai-pin.env")" == \
   "deliberately stale owner pin" ]] || fail "consumer render mutated manifest-owner pin"
 
-# The exact clean manifest-owner checkout is a valid explicit no-op write root.
-bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${repo_root}" \
+# The exact clean manifest-owner source is a valid explicit no-op write root.
+# Host CI deliberately strips ambient remotes from its physical source checkout,
+# so exercise production custody against an automatically removed standalone
+# clone with the canonical remote and a fixture protected-main ref.
+manifest_owner="${tmp}/manifest-owner"
+git clone -q --no-local "${repo_root}" "${manifest_owner}"
+git -C "${manifest_owner}" remote set-url origin \
+  "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
+git -C "${manifest_owner}" update-ref refs/remotes/origin/main "${repo_head}"
+bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${manifest_owner}" \
   --expected-head "jeryu-tool=${repo_head}" >/dev/null
-[[ -z "$(git -C "${repo_root}" status --porcelain --untracked-files=all)" ]] ||
+[[ -z "$(git -C "${manifest_owner}" status --porcelain --untracked-files=all)" ]] ||
   fail "validated no-op render dirtied the manifest-owner checkout"
 
 printf 'render-tool-manifest tests passed: keyed-future custody exact-head scope success\n'
