@@ -8,7 +8,7 @@ set -euo pipefail
 export JERYU_GOVERNED_JANKURAI_BIN="${JERYU_JANKURAI_BIN:-/home/ubuntu/.jeryu/bin/jankurai}"
 export JERYU_JANKURAI_SOURCE_REPO="http://127.0.0.1:8787/git/jeryu/jankurai.git"
 export JERYU_JANKURAI_VERSION="jankurai 1.6.11"
-export JERYU_JANKURAI_SHA256="aae47feab3c257d9a14c88aae1cc3fc4d6f8b574b1ea8429142affd2172c141d"
+export JERYU_JANKURAI_SHA256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
 export JERYU_JANKURAI_SOURCE_REV="4dfbdfa3585f1928d5f996d7b5e14608dff14a03"
 export JERYU_JANKURAI_SOURCE_TAG="v1.6.11-deadlang-precision-split.2"
 export JERYU_JANKURAI_SOURCE_TREE="7e5d501aa6f0ee6ced9a48c6288a9943d0b9573c"
