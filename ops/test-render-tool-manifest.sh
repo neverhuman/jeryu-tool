@@ -7,6 +7,23 @@ repo_root="$(cd "${here}/.." && pwd)"
 renderer="${here}/render-tool-manifest.sh"
 tmp="$(mktemp -d /tmp/test-render-tool-manifest.XXXXXX)"
 trap 'rm -rf "${tmp}"' EXIT
+real_git="$(command -v git)"
+fake_bin="${tmp}/bin"
+mkdir -p "${fake_bin}"
+cat > "${fake_bin}/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 6 && "$1" == "-C" && "$3" == "ls-remote" &&
+      "$4" == "--heads" && "$5" == "origin" && "$6" == "refs/heads/main" ]]; then
+  remote_main="$("${REAL_GIT}" -C "$2" rev-parse --verify refs/remotes/origin/main)"
+  printf '%s\trefs/heads/main\n' "${remote_main}"
+  exit 0
+fi
+exec "${REAL_GIT}" "$@"
+SH
+chmod +x "${fake_bin}/git"
+export REAL_GIT="${real_git}"
+export PATH="${fake_bin}:${PATH}"
 
 fail() {
   printf 'test-render-tool-manifest: %s\n' "$*" >&2
@@ -78,7 +95,13 @@ init_repo() {
   printf '#!/usr/bin/env bash\nset -euo pipefail\n' > "${root}/ops/ci/lib.sh"
   git -C "${root}" add ops/ci/lib.sh
   git -C "${root}" commit -q -m baseline
+  git -C "${root}" branch -M main
+  git -C "${root}" update-ref refs/remotes/origin/main HEAD
 }
+
+canonical_fixture="${tmp}/canonical-fixture"
+init_repo "${canonical_fixture}" \
+  "http://127.0.0.1:8787/git/jeryu/jeryu.git"
 
 # No-argument mode detects family drift but never writes it.
 family="${tmp}/family"
@@ -112,6 +135,9 @@ expect_failure "wrong origin" "non-canonical origin" \
 unrelated="${tmp}/unrelated"
 init_repo "${unrelated}" "${canonical}"
 unrelated_head="$(git -C "${unrelated}" rev-parse HEAD)"
+unrelated_main="$(git -C "${unrelated}" commit-tree \
+  "$(git -C "${unrelated}" rev-parse 'HEAD^{tree}')" -m 'synthetic protected main')"
+git -C "${unrelated}" update-ref refs/remotes/origin/main "${unrelated_main}"
 expect_failure "unrelated head" "not based on current protected main" \
   bash "${renderer}" --repo jeryu --repo-root "jeryu=${unrelated}" \
     --expected-head "jeryu=${unrelated_head}"
@@ -132,7 +158,8 @@ expect_failure "unselected expected head" "without matching --repo" \
 # A clean canonical linear descendant is still the wrong worktree when its
 # handed-off SHA names the protected-main parent. Refuse before touching bytes.
 wrong_descendant="${tmp}/wrong-descendant"
-git clone -q "${canonical}" "${wrong_descendant}"
+git clone -q "${canonical_fixture}" "${wrong_descendant}"
+git -C "${wrong_descendant}" remote set-url origin "${canonical}"
 git -C "${wrong_descendant}" config user.name renderer-test
 git -C "${wrong_descendant}" config user.email renderer-test@localhost
 printf 'unrelated descendant\n' > "${wrong_descendant}/wrong-descendant.txt"
@@ -156,7 +183,8 @@ cp "${here}/render_tool_manifest.py" "${renderer_fixture}/ops/"
 cp "${repo_root}/tool-manifest.toml" "${renderer_fixture}/"
 printf 'deliberately stale owner pin\n' > "${renderer_fixture}/generated/jankurai-pin.env"
 scoped_consumer="${tmp}/scoped-consumer"
-git clone -q "${canonical}" "${scoped_consumer}"
+git clone -q "${canonical_fixture}" "${scoped_consumer}"
+git -C "${scoped_consumer}" remote set-url origin "${canonical}"
 scoped_head="$(git -C "${scoped_consumer}" rev-parse HEAD)"
 bash "${renderer_fixture}/ops/render-tool-manifest.sh" --repo jeryu \
   --repo-root "jeryu=${scoped_consumer}" --expected-head "jeryu=${scoped_head}" >/dev/null
