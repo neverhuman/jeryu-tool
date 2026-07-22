@@ -1,19 +1,39 @@
-[lanes.fast]
-required = ["just fast"]
-blocks_merge = true
+[[lane]]
+name = "fast"
+command = "just fast"
+purpose = "verify generated Jankurai consumers match the governed manifest"
 
-[lanes.check]
-required = ["just check"]
-blocks_merge = true
+[[lane]]
+name = "check"
+command = "just check"
+purpose = "run deterministic registry, installer, renderer, and metadata checks"
 
-[lanes.score]
-required = ["just score"]
-blocks_merge = true
+[[lane]]
+name = "score"
+command = "just score"
+purpose = "audit repository conformance at the governed floor and ratchet"
 
-[lanes.security]
-required = ["just security"]
-blocks_merge = true
+[[lane]]
+name = "security"
+command = "just security"
+purpose = "run workflow, secret, and repository security checks"
 
-[lanes.artifact-support]
-required = ["just artifact-support"]
-blocks_merge = false
+[[lane]]
+name = "artifact-support"
+command = "just artifact-support"
+purpose = "verify artifact-support bootstrap inputs"
+
+[[lane]]
+name = "ci"
+command = "just fast && just check && just score"
+purpose = "run the canonical generated-consumer, behavior, and conformance gates"
+
+[[lane]]
+name = "docs"
+command = "just check && just score"
+purpose = "verify agent-readable documentation and its conformance routing"
+
+[[lane]]
+name = "ci-check"
+command = "just fast && just check"
+purpose = "verify generated consumers and control-plane behavior together"
