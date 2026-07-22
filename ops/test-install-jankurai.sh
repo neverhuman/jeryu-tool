@@ -7,6 +7,11 @@ installer="${here}/install-jankurai.sh"
 canonical_pin="${here}/../generated/jankurai-pin.env"
 tmp="$(mktemp -d /tmp/test-install-jankurai.XXXXXX)"
 trap 'rm -rf "${tmp}"' EXIT
+real_git="$(command -v git)"
+test_token="${tmp}/forge-token"
+printf 'test-fixture-token\n' > "${test_token}"
+chmod 600 "${test_token}"
+export JERYU_FORGE_TOKEN_FILE="${test_token}"
 
 fail() {
   printf 'test-install-jankurai: %s\n' "$*" >&2
@@ -124,10 +129,84 @@ wrong_root="${tmp}/wrong-version"
 expect_failure "wrong version" run_test_install "${wrong_root}" "${good_pin}" "${wrong}"
 [[ ! -e "${wrong_root}/bin/jankurai" ]] || fail "wrong version installed a target"
 
-# An empty dependency cache proves the real source path cannot fetch while offline.
+# An empty dependency cache proves an exact local-forge-shaped source cannot
+# fetch dependencies while offline. The Git double redirects only the canonical
+# source URL to a disposable local repository; every source identity check and
+# the real locked Cargo build still runs.
 offline_root="${tmp}/offline"
+offline_source="${tmp}/offline-source"
+mkdir -p "${offline_source}/crates/jankurai/src"
+cat > "${offline_source}/Cargo.toml" <<'TOML'
+[workspace]
+members = ["crates/jankurai"]
+resolver = "2"
+TOML
+cat > "${offline_source}/crates/jankurai/Cargo.toml" <<'TOML'
+[package]
+name = "jankurai"
+version = "1.6.11"
+edition = "2024"
+
+[dependencies]
+serde = "1.0.228"
+TOML
+cat > "${offline_source}/crates/jankurai/src/main.rs" <<'RS'
+fn main() {
+    println!("jankurai 1.6.11");
+}
+RS
+CARGO_NET_OFFLINE=true cargo +1.95.0 generate-lockfile --offline \
+  --manifest-path "${offline_source}/Cargo.toml" >/dev/null
+git init -q "${offline_source}"
+git -C "${offline_source}" config user.name installer-test
+git -C "${offline_source}" config user.email installer-test@localhost
+git -C "${offline_source}" add Cargo.toml Cargo.lock crates
+git -C "${offline_source}" commit -q -m 'offline source fixture'
+offline_rev="$(git -C "${offline_source}" rev-parse HEAD)"
+offline_tree="$(git -C "${offline_source}" rev-parse 'HEAD^{tree}')"
+offline_archive="$(git -C "${offline_source}" archive --format=tar HEAD | sha256sum | awk '{print $1}')"
+offline_lock="$(sha "${offline_source}/Cargo.lock")"
+git -C "${offline_source}" tag v1.6.11-deadlang-precision-split.2
+offline_pin="${tmp}/offline-pin.env"
+sed \
+  -e "s/^JANKURAI_REV=.*/JANKURAI_REV=\"${offline_rev}\"/" \
+  -e "s/^JANKURAI_SOURCE_TREE=.*/JANKURAI_SOURCE_TREE=\"${offline_tree}\"/" \
+  -e "s/^JANKURAI_SOURCE_ARCHIVE_SHA256=.*/JANKURAI_SOURCE_ARCHIVE_SHA256=\"${offline_archive}\"/" \
+  -e "s/^JANKURAI_CARGO_LOCK_SHA256=.*/JANKURAI_CARGO_LOCK_SHA256=\"${offline_lock}\"/" \
+  "${good_pin}" > "${offline_pin}"
+offline_git="${tmp}/git-offline-source"
+cat > "${offline_git}" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "ls-remote" ]]; then
+  args=("$@")
+  for index in "${!args[@]}"; do
+    if [[ "${args[index]}" == "${JERYU_OFFLINE_TEST_CANONICAL}" ]]; then
+      args[index]="${JERYU_OFFLINE_TEST_SOURCE}"
+    fi
+  done
+  exec "${JERYU_OFFLINE_TEST_REAL_GIT}" "${args[@]}"
+fi
+if [[ "$#" -eq 6 && "$1" == "-C" && "$3" == "remote" &&
+      "$4" == "add" && "$5" == "origin" &&
+      "$6" == "${JERYU_OFFLINE_TEST_CANONICAL}" ]]; then
+  exec "${JERYU_OFFLINE_TEST_REAL_GIT}" -C "$2" remote add origin \
+    "${JERYU_OFFLINE_TEST_SOURCE}"
+fi
+if [[ "$#" -eq 5 && "$1" == "-C" && "$3" == "remote" &&
+      "$4" == "get-url" && "$5" == "origin" ]]; then
+  printf '%s\n' "${JERYU_OFFLINE_TEST_CANONICAL}"
+  exit 0
+fi
+exec "${JERYU_OFFLINE_TEST_REAL_GIT}" "$@"
+SH
+chmod 755 "${offline_git}"
 mkdir -p "${tmp}/empty-cargo/registry"
 if env JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="${offline_root}" \
+  JERYU_PIN_ENV="${offline_pin}" JERYU_INSTALL_TEST_GIT_BIN="${offline_git}" \
+  JERYU_OFFLINE_TEST_REAL_GIT="${real_git}" \
+  JERYU_OFFLINE_TEST_SOURCE="${offline_source}" \
+  JERYU_OFFLINE_TEST_CANONICAL="http://127.0.0.1:8787/git/jeryu/jankurai.git" \
   JERYU_CARGO_CACHE_SEED="${tmp}/empty-cargo" JERYU_RUN_ID="offline-test-$$" \
   bash "${installer}" >"${tmp}/offline.log" 2>&1; then
   fail "offline fetch test unexpectedly succeeded"
