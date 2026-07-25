@@ -114,7 +114,7 @@ fn local_git_command(root: &Path) -> Command {
     command
 }
 
-fn git_local_output(root: &Path, args: &[&str]) -> Result<String, String> {
+fn git_local_output_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = local_git_command(root);
     command.args(args);
     let output = command.output().map_err(|error| {
@@ -132,7 +132,12 @@ fn git_local_output(root: &Path, args: &[&str]) -> Result<String, String> {
             if stderr.is_empty() { stdout } else { stderr }
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    Ok(output.stdout)
+}
+
+fn git_local_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = git_local_output_bytes(root, args)?;
+    Ok(String::from_utf8_lossy(&output).trim().to_owned())
 }
 
 #[cfg(unix)]
@@ -313,6 +318,138 @@ fn validate_repository_storage(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_index_state(name: &str, root: &Path) -> Result<(), String> {
+    let entries = git_local_output_bytes(root, &["ls-files", "-v", "-z"])?;
+    if !entries.is_empty() && entries.last() != Some(&0) {
+        return Err(format!(
+            "renderer write root has malformed tracked index state: {name}={}",
+            root.display()
+        ));
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let entries = entries.strip_suffix(&[0]).unwrap_or(entries.as_slice());
+    for entry in entries.split(|byte| *byte == 0) {
+        if entry.len() < 3 || entry[0] != b'H' || entry[1] != b' ' {
+            return Err(format!(
+                "renderer write root has tracked index suppression or nonordinary state: \
+{name}={} entry={:?}",
+                root.display(),
+                String::from_utf8_lossy(entry)
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_write_target(root: &Path, path: &Path) -> Result<(), String> {
+    let fail = || {
+        format!(
+            "renderer write target must be a stable regular HEAD blob: {}",
+            path.display()
+        )
+    };
+    let relative = path.strip_prefix(root).map_err(|_| fail())?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(fail());
+    }
+    let relative = relative.to_str().ok_or_else(fail)?;
+    if fs::canonicalize(path).map_err(|_| fail())? != path {
+        return Err(fail());
+    }
+    let before = fs::symlink_metadata(path).map_err(|_| fail())?;
+    if !before.file_type().is_file() || before.file_type().is_symlink() || before.nlink() != 1 {
+        return Err(fail());
+    }
+
+    let entry = git_local_output_bytes(
+        root,
+        &["ls-tree", "-z", "--full-tree", "HEAD", "--", relative],
+    )?;
+    if entry.last() != Some(&0) || entry[..entry.len() - 1].contains(&0) {
+        return Err(fail());
+    }
+    let entry = &entry[..entry.len() - 1];
+    let tab = entry
+        .iter()
+        .position(|byte| *byte == b'\t')
+        .ok_or_else(fail)?;
+    if &entry[tab + 1..] != relative.as_bytes() {
+        return Err(fail());
+    }
+    let header = std::str::from_utf8(&entry[..tab]).map_err(|_| fail())?;
+    let fields: Vec<&str> = header.split_whitespace().collect();
+    if fields.len() != 3
+        || !matches!(fields[0], "100644" | "100755")
+        || fields[1] != "blob"
+        || !regex("^[0-9a-f]{40}$").is_match(fields[2])
+    {
+        return Err(fail());
+    }
+    let working = git_local_output(root, &["hash-object", "--no-filters", "--", relative])?;
+    if working != fields[2] {
+        return Err(fail());
+    }
+    let after = fs::symlink_metadata(path).map_err(|_| fail())?;
+    if !same_file_identity(&before, &after) {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_write_target(_root: &Path, path: &Path) -> Result<(), String> {
+    Err(format!(
+        "renderer write target custody requires Unix metadata: {}",
+        path.display()
+    ))
+}
+
+fn validate_write_targets(repository_targets: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    for (root, targets) in repository_targets {
+        let name = root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("<unknown>");
+        validate_index_state(name, root)?;
+        for target in targets {
+            validate_write_target(root, target)?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_rendered_changes(
+    repository_targets: &[(PathBuf, Vec<PathBuf>)],
+    rendered: &[(PathBuf, String)],
+) -> Result<(), String> {
+    validate_write_targets(repository_targets)?;
+    let allowed: BTreeSet<&Path> = repository_targets
+        .iter()
+        .flat_map(|(_, targets)| targets.iter().map(PathBuf::as_path))
+        .collect();
+    let mut unique = BTreeSet::new();
+    for (path, _) in rendered {
+        if !allowed.contains(path.as_path()) || !unique.insert(path.as_path()) {
+            return Err(format!(
+                "renderer attempted an unvalidated or duplicate write target: {}",
+                path.display()
+            ));
+        }
+    }
+    for (path, value) in rendered {
+        fs::write(path, value)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn validate_write_root(
     name: &str,
     root: &Path,
@@ -328,6 +465,7 @@ fn validate_write_root(
         ));
     }
     validate_repository_storage(root)?;
+    validate_index_state(name, root)?;
     if !git_local_output(root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
         return Err(format!(
             "renderer write root must start clean: {name}={}",
@@ -586,37 +724,54 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
         return Err("--expected-head is valid only in explicit write mode".to_owned());
     }
 
+    let mut repository_targets = Vec::new();
+    for name in &repos {
+        let root = repo_root(tool_root, &family_root, name, &overrides);
+        if !root.is_dir() {
+            continue;
+        }
+        let mut targets = consumer_paths(&root)?;
+        if name == "jeryu-tool" {
+            targets.push(root.join("generated/jankurai-pin.env"));
+            targets.sort();
+            targets.dedup();
+        }
+        repository_targets.push((root, targets));
+    }
+    if !args.check {
+        validate_write_targets(&repository_targets)?;
+    }
+
     let mut changed = Vec::new();
+    let mut rendered_changes = Vec::new();
     if repo_set.contains("jeryu-tool") {
         let path = repo_root(tool_root, &family_root, "jeryu-tool", &overrides)
             .join("generated/jankurai-pin.env");
         if fs::read_to_string(&path).ok().as_deref() != Some(&pin.env_text()) {
             changed.push(path.clone());
             if !args.check {
-                fs::create_dir_all(path.parent().unwrap_or(tool_root))
-                    .map_err(|error| format!("failed to create generated directory: {error}"))?;
-                fs::write(&path, pin.env_text())
-                    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+                rendered_changes.push((path, pin.env_text()));
             }
         }
     }
-    for name in &repos {
-        let root = repo_root(tool_root, &family_root, name, &overrides);
-        if !root.is_dir() {
-            continue;
-        }
-        for path in consumer_paths(&root)? {
-            let original = fs::read_to_string(&path)
+    for (_, targets) in &repository_targets {
+        for path in targets {
+            if path.ends_with("generated/jankurai-pin.env") {
+                continue;
+            }
+            let original = fs::read_to_string(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-            let rendered = render_consumer(&path, &pin, &function)?;
+            let rendered = render_consumer(path, &pin, &function)?;
             if rendered != original {
                 changed.push(path.clone());
                 if !args.check {
-                    fs::write(&path, rendered)
-                        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+                    rendered_changes.push((path.clone(), rendered));
                 }
             }
         }
+    }
+    if !args.check {
+        apply_rendered_changes(&repository_targets, &rendered_changes)?;
     }
     let display = |path: &Path| {
         path.strip_prefix(&family_root)
@@ -688,6 +843,13 @@ mod tests {
     fn write_private(path: &Path, value: &str) {
         fs::write(path, value).expect("write fixture");
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("chmod fixture");
+    }
+
+    #[cfg(unix)]
+    fn run_fixture_git(root: &Path, args: &[&str]) {
+        let mut command = local_git_command(root);
+        let status = command.args(args).status().expect("run fixture Git");
+        assert!(status.success(), "fixture Git failed: {args:?}");
     }
 
     #[test]
@@ -775,6 +937,55 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
         fs::remove_dir_all(root.join(".git")).expect("remove fixture metadata");
         fs::write(root.join(".git"), "gitdir: /tmp/attacker\n").expect("write gitfile");
         assert!(validate_repository_storage(&root).is_err());
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rendered_changes_reject_hidden_index_state_without_mutating_bytes() {
+        let root = test_root("hidden-index");
+        let status = Command::new(GIT_BIN)
+            .args(["init", "-q"])
+            .arg(&root)
+            .status()
+            .expect("git init");
+        assert!(status.success());
+        run_fixture_git(&root, &["config", "user.name", "Jeryu Test"]);
+        run_fixture_git(&root, &["config", "user.email", "jeryu-test@invalid"]);
+        let target = root.join("generated.txt");
+        fs::write(&target, "original\n").expect("write tracked target");
+        run_fixture_git(&root, &["add", "generated.txt"]);
+        run_fixture_git(&root, &["commit", "-q", "-m", "fixture"]);
+
+        let targets = vec![(root.clone(), vec![target.clone()])];
+        validate_write_targets(&targets).expect("ordinary tracked target");
+
+        for (set_flag, clear_flag) in [
+            ("--assume-unchanged", "--no-assume-unchanged"),
+            ("--skip-worktree", "--no-skip-worktree"),
+        ] {
+            run_fixture_git(&root, &["update-index", set_flag, "generated.txt"]);
+            let hostile = format!("hidden by {set_flag}\n");
+            fs::write(&target, &hostile).expect("write hostile hidden bytes");
+            assert!(
+                git_local_output(&root, &["status", "--porcelain"])
+                    .expect("hidden status")
+                    .is_empty(),
+                "fixture change was not hidden by {set_flag}"
+            );
+            assert!(validate_index_state("fixture", &root).is_err());
+            assert!(validate_write_target(&root, &target).is_err());
+            let replacement = vec![(target.clone(), "rendered\n".to_owned())];
+            assert!(apply_rendered_changes(&targets, &replacement).is_err());
+            assert_eq!(
+                fs::read_to_string(&target).expect("read target after rejection"),
+                hostile
+            );
+            run_fixture_git(&root, &["update-index", clear_flag, "generated.txt"]);
+            fs::write(&target, "original\n").expect("restore target");
+            validate_write_targets(&targets).expect("restored ordinary target");
+        }
+
         fs::remove_dir_all(root).expect("remove test root");
     }
 }
