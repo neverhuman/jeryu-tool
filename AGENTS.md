@@ -14,7 +14,7 @@ not authored.
 `tools-registry.toml` + `tasks/` are the single source of truth for reusable
 tools (shared crates / TS / React / shell libs) and their build queue. Discovery
 of new candidates lives in `jeryu-tool-finder`, which files proposals here;
-`ops/registry_summary.py --check` validates them in `just check`. The forge
+`ops/registry-summary.sh --check` validates them in `just check`. The forge
 golden box on `/repos` reads the registry via `GET /api/v1/tools/registry/summary`.
 
 Keep this repo lightweight: manifests, generators, installer, default policy,

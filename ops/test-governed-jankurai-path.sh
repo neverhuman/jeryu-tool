@@ -13,16 +13,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-RENDERER_PY="${here}/render_tool_manifest.py" python3 - <<'PY' >"${source_verifier}"
-import importlib.util
-import os
-
-spec = importlib.util.spec_from_file_location("render_tool_manifest", os.environ["RENDERER_PY"])
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-print(module.ensure_script_text(module.load_pin()), end="")
-PY
+repo_root="$(cd "${here}/.." && pwd)"
+cargo run --quiet --locked --offline --manifest-path "${repo_root}/Cargo.toml" \
+  --bin jeryu-toolctl -- --tool-root "${repo_root}" emit-ensure-script \
+  >"${source_verifier}"
 
 fail() {
   printf 'test-governed-jankurai-path: %s\n' "$*" >&2

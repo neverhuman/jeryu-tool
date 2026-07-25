@@ -20,6 +20,16 @@
       "lane": "score",
       "purpose": "verify release notes stay routed through the score lane"
     },
+    "Cargo.lock": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify the Rust control dependency graph is locked and offline-buildable"
+    },
+    "Cargo.toml": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify the Rust registry and renderer compile and test"
+    },
     "Justfile": {
       "command": "just fast && just check && just score",
       "lane": "ci",
@@ -69,6 +79,21 @@
       "command": "just check",
       "lane": "check",
       "purpose": "verify the local CI helper scripts parse and stay reproducible"
+    },
+    "crates/": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify Rust registry aggregation, rendering, and custody behavior"
+    },
+    "tests/": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "exercise the Rust control CLI as an external process"
+    },
+    "rust-toolchain.toml": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "verify the pinned Rust control toolchain"
     },
     "tool-manifest.toml": {
       "command": "just fast",

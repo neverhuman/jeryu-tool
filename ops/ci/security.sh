@@ -4,9 +4,9 @@ source ops/ci/lib.sh
 mkdir -p target/security
 if command -v gitleaks >/dev/null 2>&1; then
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    gitleaks detect --redact --verbose || true
+    gitleaks detect --redact --verbose
   else
-    gitleaks detect --no-git --redact --verbose || true
+    gitleaks detect --no-git --redact --verbose
   fi
 fi
 if command -v actionlint >/dev/null 2>&1 && [[ -d .github/workflows ]]; then

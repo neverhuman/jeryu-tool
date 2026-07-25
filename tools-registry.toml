@@ -3,7 +3,7 @@
 # jeryu-tool's second pillar (see docs/tools-registry.md). tool-manifest.toml
 # governs the jankurai AUDIT toolchain; THIS file is the catalogue of reusable
 # code tools the family ships and shares. The forge "golden box" on /repos reads
-# it via GET /api/v1/tools/registry/summary; ops/registry_summary.py validates it.
+# it via GET /api/v1/tools/registry/summary; ops/registry-summary.sh validates it.
 #
 # PROVENANCE OF LOC FIGURES: entries below are PREPOPULATED from the real
 # jankurai ecosystem (crates: tuiwright, jankurai-guard, ...) and the jankurai

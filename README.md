@@ -1,5 +1,9 @@
 # jeryu-tool
 
+[![Jankurai score: 65+](https://img.shields.io/badge/Jankurai-65%2B-brightgreen)](agent/audit-policy.toml)
+
+Agent and contributor orientation starts at [AGENTS.md](AGENTS.md).
+
 The **tool control plane** for the jeryu family. One repo, two jobs, no product
 code:
 
@@ -22,7 +26,7 @@ registry.
 | `tool-manifest.toml` | **Audit source of truth**: local-forge commit/tag, source tree/archive and lock digests, exact version, reproducible build environment, binary digest, per-profile score floors, and per-tool default modes. |
 | `tools-registry.toml` | **Registry source of truth**: one `[[tool]]` per reusable tool — kind, status, adopting/candidate repos, realized + anticipated LOC saved. |
 | `tasks/NNNN-*.toml` | Reusable-tool **build queue**: build-this-tool / migrate-these-repos work items. |
-| `ops/registry_summary.py` | Validates the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
+| `ops/registry-summary.sh` | Runs the locked Rust validator for the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
 | `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
 | `ops/install-jankurai.sh` | Verifies the immutable local-forge source, builds from the lockfile offline, atomically installs `/home/ubuntu/.jeryu/bin/jankurai`, preserves rollback content, and writes a content-addressed receipt. |
 | `ops/qualify-jankurai-candidate.sh` | Builds the exact premerge candidate into a temporary root and persists a content-addressed diagnostic receipt; it can never target the governed host root. |
@@ -32,6 +36,17 @@ registry.
 | `generated/jankurai-pin.env` | Generated source/build/binary identity, including commit/tag/tree, archive/lock/binary digests, toolchain, target, and exact version. Do not edit by hand. |
 | `docs/tools.md` | The jankurai tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
 | `docs/tools-registry.md` | The reusable-tool registry schema, lifecycle, and LOC-saved definition. |
+
+## Quick start
+
+Install the pinned Rust toolchain and `just`, then run:
+
+```bash
+just
+```
+
+The full local gate runs drift, locked Rust tests and Clippy, the Jankurai
+score, and the security lane.
 
 ## Upgrading jankurai (the whole family at once)
 

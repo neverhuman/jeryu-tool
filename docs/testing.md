@@ -1,7 +1,7 @@
 # Testing
 
-`jeryu-tool` is validated by its CI lanes; there is no product code to unit-test,
-so the "tests" are the deterministic gates over the manifest and generator.
+`jeryu-tool` is validated by unit and integration tests for its Rust registry
+and renderer plus deterministic gates over the manifest and generated output.
 
 ## Local gate
 
@@ -16,8 +16,8 @@ Or run the lanes individually (same scripts CI runs — see `agent/proof-lanes.t
 - `just fast` — assert every family consumer's pin matches `tool-manifest.toml`
   (`ops/render-tool-manifest.sh --check`).
 - `just check` — the manifest parses with a complete `[jankurai]` block, the
-  generated pin is current, and every shell/python entrypoint is syntactically
-  valid.
+  generated pin is current, Rust tests and warnings-denied Clippy pass locked
+  and offline, and every shell entrypoint is syntactically valid.
 - `just score` — the pinned jankurai audit over this repo (writes `.jankurai/`).
 - `just security` — gitleaks / actionlint / committed-`.env` checks.
 

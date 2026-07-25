@@ -9,7 +9,7 @@ forces, and reports on the jankurai auditor.
 - **`tool-manifest.toml`** — the single source of truth: the jankurai pin
   (`repo`/`rev`/`tag`/`version`/`semver`), per-profile score floors, and per-tool
   default modes.
-- **`ops/render_tool_manifest.py`** (via `ops/render-tool-manifest.sh`) — the
+- **`jeryu-toolctl`** (via `ops/render-tool-manifest.sh`) — the locked Rust
   generator. It propagates the pin from the manifest into every family consumer
   (CI scripts, workflow envs, sandbox Dockerfiles, each repo's
   `required_tool_version`) and emits `generated/jankurai-pin.env`. `--check` is

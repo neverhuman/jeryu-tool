@@ -49,7 +49,20 @@ jobs:
           ops/test-install-jankurai.sh ops/test-render-tool-manifest.sh
           ops/ci/check.sh ops/ci/fast.sh ops/ci/lib.sh ops/ci/pr-ci.sh
           scripts/ci-doctor.sh
-      - name: Python syntax and registry
+      - name: Locked Rust control tools
         run: |
-          python3 -m py_compile ops/render_tool_manifest.py ops/registry_summary.py
-          python3 ops/registry_summary.py --check
+          cargo test --locked --offline --all-targets
+          bash ops/registry-summary.sh --check
+      - name: Security lane
+        run: bash ops/ci/security.sh
+      - name: Jankurai audit lane
+        run: bash ops/ci/score.sh
+  security:
+    name: security-secret-dependency-workflow-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - name: Secret scan, dependency policy, and workflow lint
+        run: bash ops/ci/security.sh

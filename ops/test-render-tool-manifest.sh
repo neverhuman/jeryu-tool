@@ -42,57 +42,11 @@ expect_failure() {
   }
 }
 
-# A fabricated future predecessor proves rendering is keyed/shape-based rather
-# than a one-time string replacement for 1.6.10.
-TEST_TMP="${tmp}" RENDERER_PY="${here}/render_tool_manifest.py" python3 - <<'PY'
-import importlib.util
-import json
-import os
-from pathlib import Path
-
-spec = importlib.util.spec_from_file_location("render_tool_manifest", os.environ["RENDERER_PY"])
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-pin = module.load_pin()
-root = Path(os.environ["TEST_TMP"])
-shell_pin = module.shell_pin_block(pin)
-require_jankurai = module.require_jankurai_function()
-ensure_script = module.ensure_script_text(pin)
-assert "JERYU_GOVERNED_JANKURAI_BIN" not in shell_pin
-assert "/home/ubuntu/.jeryu/bin/jankurai" not in shell_pin
-assert "/opt/jain-ci/authority/release-bin/jankurai" in require_jankurai
-assert "/home/ubuntu/.jeryu/bin/jankurai" in require_jankurai
-assert "local mode=receipt-bound" in require_jankurai
-assert require_jankurai in ensure_script
-workflow = root / ".github" / "workflows" / "future.yml"
-workflow.parent.mkdir(parents=True)
-workflow.write_text(
-    "name: future\nenv:\n"
-    "  JANKURAI_REPO: \"https://github.com/neverhuman/jankurai.git\"\n"
-    "  JANKURAI_TAG: \"v9.9.9-deadlang-precision-split.9\"\n"
-    f"  JANKURAI_REV: \"{'f' * 40}\"\n\n"
-    "jobs: {}\n"
-)
-rendered = module.render_consumer(workflow, pin)
-for name, key in module.PIN_ENV_FIELDS:
-    assert f"  {name}: {json.dumps(pin[key])}" in rendered, name
-assert "9.9.9" not in rendered
-assert "github.com/neverhuman/jankurai" not in rendered
-
-doc = root / "docs" / "testing.md"
-doc.parent.mkdir()
-doc.write_text(
-    "Jankurai 9.9.9 / jankurai 9.9.9 / "
-    "v9.9.9-deadlang-precision-split.9 / "
-    "https://github.com/neverhuman/jankurai.git\n"
-)
-rendered_doc = module.render_consumer(doc, pin)
-assert "9.9.9" not in rendered_doc
-assert pin["version"] in rendered_doc
-assert pin["tag"] in rendered_doc
-assert pin["repo"] in rendered_doc
-PY
+# Rust unit tests prove rendering is keyed and shape-based against a fabricated
+# future predecessor. Build the exact binary once for the custody hostiles.
+cargo build --quiet --locked --offline --manifest-path "${repo_root}/Cargo.toml" \
+  --bin jeryu-toolctl
+toolctl="${repo_root}/target/debug/jeryu-toolctl"
 
 init_repo() {
   local root="$1" origin="$2"
@@ -186,17 +140,18 @@ descendant_after="$(sha256sum "${wrong_descendant}/ops/ci/lib.sh" | awk '{print 
 # A consumer-only write cannot repair or otherwise touch the renderer owner's
 # generated env as an implicit side effect.
 renderer_fixture="${tmp}/renderer-owner"
-mkdir -p "${renderer_fixture}/ops" "${renderer_fixture}/generated"
-cp "${here}/render-tool-manifest.sh" "${renderer_fixture}/ops/"
-cp "${here}/render_tool_manifest.py" "${renderer_fixture}/ops/"
+mkdir -p "${renderer_fixture}/ops/render-assets" "${renderer_fixture}/generated"
+cp "${here}/render-assets/require-jankurai.sh" \
+  "${renderer_fixture}/ops/render-assets/"
 cp "${repo_root}/tool-manifest.toml" "${renderer_fixture}/"
 printf 'deliberately stale owner pin\n' > "${renderer_fixture}/generated/jankurai-pin.env"
 scoped_consumer="${tmp}/scoped-consumer"
 git clone -q "${canonical_fixture}" "${scoped_consumer}"
 git -C "${scoped_consumer}" remote set-url origin "${canonical}"
 scoped_head="$(git -C "${scoped_consumer}" rev-parse HEAD)"
-bash "${renderer_fixture}/ops/render-tool-manifest.sh" --repo jeryu \
-  --repo-root "jeryu=${scoped_consumer}" --expected-head "jeryu=${scoped_head}" >/dev/null
+"${toolctl}" --tool-root "${renderer_fixture}" render-tool-manifest --repo jeryu \
+  --repo-root "jeryu=${scoped_consumer}" \
+  --expected-head "jeryu=${scoped_head}" >/dev/null
 [[ "$(cat "${renderer_fixture}/generated/jankurai-pin.env")" == \
   "deliberately stale owner pin" ]] || fail "consumer render mutated manifest-owner pin"
 

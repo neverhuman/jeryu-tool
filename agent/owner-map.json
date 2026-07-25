@@ -7,6 +7,8 @@
     ".jankurai/**": "audit",
     "AGENTS.md": "split",
     "CHANGELOG.md": "release",
+    "Cargo.lock": "workspace",
+    "Cargo.toml": "workspace",
     "Justfile": "ops",
     "README.md": "docs",
     "VERSION": "release",
@@ -23,11 +25,17 @@
     "policy/**": "audit",
     "scripts/": "ops",
     "scripts/**": "ops",
+    "crates/": "ops",
+    "crates/**": "ops",
     "tool-manifest.toml": "audit",
     "tools-registry.toml": "registry",
     "tasks/": "registry",
     "tasks/**": "registry",
-    "tools/": "ops"
+    "tools/": "ops",
+    "rust-toolchain.toml": "workspace",
+    "tests/": "tests",
+    "tests/**": "tests",
+    "crates/jeryu-tool-control/tests/": "tests"
   },
   "workspace": "jeryu-tool"
 }
