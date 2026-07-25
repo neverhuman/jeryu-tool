@@ -59,6 +59,20 @@ expect_failure "unscoped check-only" "unscoped renderer invocation is check-only
 after="$(sha256sum "${family}/jeryu/ops/ci/lib.sh" | awk '{print $1}')"
 [[ "${before}" == "${after}" ]] || fail "unscoped invocation mutated a consumer"
 
+# Bundle-restored and other standalone no-local clones may run every read-only
+# test, but their only permitted write-mode outcome is refusal at tool-source
+# custody. The canonical checkout below exercises the remaining write hostiles.
+canonical_tool_root="/home/ubuntu/jain-split/jeryu-split/jeryu-tool"
+if [[ "${repo_root}" != "${canonical_tool_root}" ]]; then
+  repo_head="$(git -C "${repo_root}" rev-parse HEAD)"
+  expect_failure "standalone renderer source" "exact canonical family root" \
+    bash "${renderer}" --repo jeryu-tool \
+      --repo-root "jeryu-tool=${repo_root}" \
+      --expected-head "jeryu-tool=${repo_head}"
+  printf 'render-tool-manifest tests passed: read-only clone refused write custody\n'
+  exit 0
+fi
+
 expect_failure "missing explicit root" "requires an explicit --repo-root" \
   bash "${renderer}" --repo jeryu
 expect_failure "duplicate repository selector" "duplicate --repo" \
