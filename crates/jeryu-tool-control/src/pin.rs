@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -25,45 +25,141 @@ pub const PIN_ENV_FIELDS: [(&str, &str); 14] = [
     ("JANKURAI_BUILD_MODE", "build_mode"),
 ];
 
+const TOP_LEVEL_FIELDS: [&str; 4] = ["schema_version", "jankurai", "floors", "tools"];
+const FLOOR_FIELDS: [&str; 4] = ["default", "public-portal", "jeryu-ci-runner", "jeryu-tool"];
+const TOOL_FIELDS: [&str; 20] = [
+    "audit-ci",
+    "security",
+    "git-bad-behavior",
+    "ci-bad-behavior",
+    "release-bad-behavior",
+    "proof-routing",
+    "proofbind",
+    "proofmark-rust",
+    "copy-code",
+    "contract-drift",
+    "rust-witness",
+    "ux-qa",
+    "db-migration-analyze",
+    "coverage-evidence",
+    "vibe-coverage",
+    "authz-matrix",
+    "input-boundary",
+    "agent-tool-supply",
+    "release-readiness",
+    "cost-budget",
+];
+
 #[derive(Debug, Clone)]
 pub struct Pin(BTreeMap<String, String>);
+
+fn exact_keys(table: &toml::Table, expected: &[&str], context: &str) -> Result<(), String> {
+    let actual: BTreeSet<&str> = table.keys().map(String::as_str).collect();
+    let expected: BTreeSet<&str> = expected.iter().copied().collect();
+    if actual != expected {
+        let missing: Vec<&str> = expected.difference(&actual).copied().collect();
+        let unknown: Vec<&str> = actual.difference(&expected).copied().collect();
+        return Err(format!(
+            "tool-manifest.toml {context} key set mismatch: missing={missing:?} unknown={unknown:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn shell_double_quote_safe(value: &str) -> bool {
+    !value.is_empty()
+        && !value
+            .chars()
+            .any(|character| matches!(character, '"' | '\\' | '$' | '`' | '\n' | '\r' | '\0'))
+}
 
 impl Pin {
     pub fn load(tool_root: &Path) -> Result<Self, String> {
         let manifest = tool_root.join("tool-manifest.toml");
         let text = fs::read_to_string(&manifest)
             .map_err(|error| format!("failed to read {}: {error}", manifest.display()))?;
-        let parsed: toml::Value = toml::from_str(&text)
-            .map_err(|error| format!("failed to parse {}: {error}", manifest.display()))?;
-        let table = parsed
+        Self::parse(&text)
+    }
+
+    fn parse(text: &str) -> Result<Self, String> {
+        let parsed: toml::Value = toml::from_str(text)
+            .map_err(|error| format!("failed to parse tool-manifest.toml: {error}"))?;
+        let top = parsed
+            .as_table()
+            .ok_or_else(|| "tool-manifest.toml must contain a top-level table".to_owned())?;
+        exact_keys(top, &TOP_LEVEL_FIELDS, "top-level")?;
+        if top.get("schema_version").and_then(toml::Value::as_str) != Some("1") {
+            return Err("tool-manifest.toml schema_version must be \"1\"".to_owned());
+        }
+
+        let table = top
             .get("jankurai")
             .and_then(toml::Value::as_table)
             .ok_or_else(|| "tool-manifest.toml missing [jankurai]".to_owned())?;
+        let pin_fields: Vec<&str> = PIN_ENV_FIELDS.iter().map(|(_, field)| *field).collect();
+        exact_keys(table, &pin_fields, "[jankurai]")?;
         let mut fields = BTreeMap::new();
-        let mut missing = Vec::new();
         for (_, key) in PIN_ENV_FIELDS {
             match table.get(key).and_then(toml::Value::as_str) {
-                Some(value) if !value.is_empty() => {
+                Some(value) if shell_double_quote_safe(value) => {
                     fields.insert(key.to_owned(), value.to_owned());
                 }
-                _ => missing.push(key),
+                _ => {
+                    return Err(format!(
+                        "tool-manifest.toml [jankurai].{key} must be a non-empty, non-executable string"
+                    ));
+                }
             }
         }
-        if !missing.is_empty() {
-            return Err(format!(
-                "tool-manifest.toml [jankurai] missing: {}",
-                missing.join(", ")
-            ));
+
+        let floors = top
+            .get("floors")
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| "tool-manifest.toml missing [floors]".to_owned())?;
+        exact_keys(floors, &FLOOR_FIELDS, "[floors]")?;
+        for field in FLOOR_FIELDS {
+            let value = floors
+                .get(field)
+                .and_then(toml::Value::as_integer)
+                .ok_or_else(|| format!("tool-manifest.toml [floors].{field} must be an integer"))?;
+            if !(0..=100).contains(&value) {
+                return Err(format!(
+                    "tool-manifest.toml [floors].{field} must be between 0 and 100"
+                ));
+            }
         }
+
+        let tools = top
+            .get("tools")
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| "tool-manifest.toml missing [tools]".to_owned())?;
+        exact_keys(tools, &TOOL_FIELDS, "[tools]")?;
+        for field in TOOL_FIELDS {
+            let value = tools
+                .get(field)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| format!("tool-manifest.toml [tools].{field} must be a string"))?;
+            if !matches!(value, "required" | "advisory" | "disabled") {
+                return Err(format!(
+                    "tool-manifest.toml [tools].{field} has invalid mode {value:?}"
+                ));
+            }
+        }
+
         let pin = Self(fields);
-        if pin.get("repo") != "http://127.0.0.1:8787/git/jeryu/jankurai.git" {
+        pin.validate()?;
+        Ok(pin)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.get("repo") != "http://127.0.0.1:8787/git/jeryu/jankurai.git" {
             return Err(
                 "Jankurai release source must be the approved local Jeryu forge URL".to_owned(),
             );
         }
         let sha = Regex::new("^[0-9a-f]{40}$").expect("constant regex");
         for key in ["rev", "source_tree"] {
-            if !sha.is_match(pin.get(key)) {
+            if !sha.is_match(self.get(key)) {
                 return Err(format!(
                     "invalid {key}: expected 40 lowercase hexadecimal characters"
                 ));
@@ -75,11 +171,58 @@ impl Pin {
             "cargo_lock_sha256",
             "binary_sha256",
         ] {
-            if !digest.is_match(pin.get(key)) {
+            if !digest.is_match(self.get(key)) {
                 return Err(format!("invalid {key}: expected SHA-256"));
             }
         }
-        Ok(pin)
+        let semver = Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").expect("constant regex");
+        if !semver.is_match(self.get("semver")) {
+            return Err("invalid semver: expected MAJOR.MINOR.PATCH".to_owned());
+        }
+        if self.get("version") != format!("jankurai {}", self.get("semver")) {
+            return Err("version must equal \"jankurai <semver>\"".to_owned());
+        }
+        let tag = Regex::new(r"^v([0-9]+\.[0-9]+\.[0-9]+)-deadlang-precision-split\.[1-9][0-9]*$")
+            .expect("constant regex");
+        let tag_semver = tag
+            .captures(self.get("tag"))
+            .and_then(|captures| captures.get(1))
+            .map(|value| value.as_str());
+        if tag_semver != Some(self.get("semver")) {
+            return Err(
+                "tag must be v<semver>-deadlang-precision-split.<positive integer>".to_owned(),
+            );
+        }
+        if !semver.is_match(self.get("rust_toolchain")) {
+            return Err("invalid rust_toolchain: expected MAJOR.MINOR.PATCH".to_owned());
+        }
+        let tool_version = Regex::new(
+            r"^(rustc|cargo) ([0-9]+\.[0-9]+\.[0-9]+) \([0-9a-f]{9} [0-9]{4}-[0-9]{2}-[0-9]{2}\)$",
+        )
+        .expect("constant regex");
+        let rustc = tool_version
+            .captures(self.get("rustc_version"))
+            .ok_or_else(|| "invalid rustc_version".to_owned())?;
+        if rustc.get(1).map(|value| value.as_str()) != Some("rustc")
+            || rustc.get(2).map(|value| value.as_str()) != Some(self.get("rust_toolchain"))
+        {
+            return Err("rustc_version must match rust_toolchain".to_owned());
+        }
+        let cargo = tool_version
+            .captures(self.get("cargo_version"))
+            .ok_or_else(|| "invalid cargo_version".to_owned())?;
+        if cargo.get(1).map(|value| value.as_str()) != Some("cargo") {
+            return Err("invalid cargo_version".to_owned());
+        }
+        let target = Regex::new(r"^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+(?:-[a-z0-9_]+)?$")
+            .expect("constant regex");
+        if !target.is_match(self.get("target_triple")) {
+            return Err("invalid target_triple".to_owned());
+        }
+        if self.get("build_mode") != "cargo-install-locked-offline-path-v1" {
+            return Err("invalid build_mode".to_owned());
+        }
+        Ok(())
     }
 
     pub fn get(&self, key: &str) -> &str {
@@ -158,5 +301,49 @@ impl Pin {
         }));
         lines.push(format!("  {WORKFLOW_PIN_MARKER_END}"));
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn canonical() -> String {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        fs::read_to_string(root.join("tool-manifest.toml")).expect("canonical manifest")
+    }
+
+    #[test]
+    fn manifest_schema_and_shell_fields_are_closed() {
+        let text = canonical();
+        Pin::parse(&text).expect("canonical pin");
+
+        let unknown_top = text.replacen(
+            "schema_version = \"1\"",
+            "schema_version = \"1\"\nunknown_top = \"forbidden\"",
+            1,
+        );
+        assert!(Pin::parse(&unknown_top).is_err());
+
+        let unknown_pin = text.replacen(
+            "[jankurai]\n",
+            "[jankurai]\nunknown_pin = \"forbidden\"\n",
+            1,
+        );
+        assert!(Pin::parse(&unknown_pin).is_err());
+
+        let executable = text.replacen(
+            "semver                = \"1.6.11\"",
+            "semver                = \"$(touch /tmp/forbidden)\"",
+            1,
+        );
+        assert!(Pin::parse(&executable).is_err());
+
+        let breakout = text.replacen(
+            "build_mode            = \"cargo-install-locked-offline-path-v1\"",
+            r#"build_mode            = "cargo-install-locked-offline-path-v1\"; forbidden; echo \""#,
+            1,
+        );
+        assert!(Pin::parse(&breakout).is_err());
     }
 }

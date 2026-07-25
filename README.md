@@ -51,7 +51,7 @@ score, and the security lane.
 ## Upgrading jankurai (the whole family at once)
 
 1. Edit `[jankurai]` in `tool-manifest.toml`.
-2. Commit the manifest update, then run `ops/render-tool-manifest.sh --repo <name> --repo-root <name>=<clean-path> --expected-head <name>=<40-hex-sha>` for every explicitly claimed root. Unscoped invocation is check-only; writes require the exact handed-off clean canonical local-forge checkout based on current protected `main`.
+2. Commit the manifest update, then run `JERYU_FORGE_TOKEN_FILE=<absolute-private-token-path> ops/render-tool-manifest.sh --repo <name> --repo-root <name>=/home/ubuntu/jain-split/jeryu-split/<name> --expected-head <name>=<40-hex-sha>` for every explicitly claimed root. Unscoped invocation is check-only; writes require the exact handed-off clean canonical physical checkout based on current protected `main`. Alternate clones and registered worktrees are read-only fixtures and can never receive generated writes; the token path must name an owner-held mode-0600, single-link regular file.
 3. Land every consumer and this manifest through exact-head protected PRs, then require `ops/render-tool-manifest.sh --check` to be drift-free.
 4. Host: `ops/install-jankurai.sh` rebuilds offline and atomically installs only when source, build, binary, path, and receipt all match.
 5. Sandbox: rebuild the agent-sandbox image from the same identity and verify its baked binary digest before any network-isolated lane runs.

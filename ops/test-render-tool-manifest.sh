@@ -7,23 +7,6 @@ repo_root="$(cd "${here}/.." && pwd)"
 renderer="${here}/render-tool-manifest.sh"
 tmp="$(mktemp -d /tmp/test-render-tool-manifest.XXXXXX)"
 trap 'rm -rf "${tmp}"' EXIT
-real_git="$(command -v git)"
-fake_bin="${tmp}/bin"
-mkdir -p "${fake_bin}"
-cat > "${fake_bin}/git" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$#" -eq 6 && "$1" == "-C" && "$3" == "ls-remote" &&
-      "$4" == "--heads" && "$5" == "origin" && "$6" == "refs/heads/main" ]]; then
-  remote_main="$("${REAL_GIT}" -C "$2" rev-parse --verify refs/remotes/origin/main)"
-  printf '%s\trefs/heads/main\n' "${remote_main}"
-  exit 0
-fi
-exec "${REAL_GIT}" "$@"
-SH
-chmod +x "${fake_bin}/git"
-export REAL_GIT="${real_git}"
-export PATH="${fake_bin}:${PATH}"
 
 fail() {
   printf 'test-render-tool-manifest: %s\n' "$*" >&2
@@ -78,30 +61,31 @@ after="$(sha256sum "${family}/jeryu/ops/ci/lib.sh" | awk '{print $1}')"
 
 expect_failure "missing explicit root" "requires an explicit --repo-root" \
   bash "${renderer}" --repo jeryu
+expect_failure "duplicate repository selector" "duplicate --repo" \
+  bash "${renderer}" --check --repo jeryu --repo jeryu
+expect_failure "duplicate family root" "duplicate --family-root" \
+  bash "${renderer}" --check --family-root "${family}" --family-root "${family}"
 
 canonical="http://127.0.0.1:8787/git/jeryu/jeryu.git"
 dirty="${tmp}/dirty"
 init_repo "${dirty}" "${canonical}"
 dirty_head="$(git -C "${dirty}" rev-parse HEAD)"
 printf '# dirty\n' >> "${dirty}/ops/ci/lib.sh"
-expect_failure "dirty root" "must start clean" \
+expect_failure "noncanonical dirty root" "not the canonical physical checkout" \
   bash "${renderer}" --repo jeryu --repo-root "jeryu=${dirty}" \
     --expected-head "jeryu=${dirty_head}"
 
 wrong_origin="${tmp}/wrong-origin"
 init_repo "${wrong_origin}" "http://example.invalid/jeryu.git"
 wrong_origin_head="$(git -C "${wrong_origin}" rev-parse HEAD)"
-expect_failure "wrong origin" "non-canonical origin" \
+expect_failure "noncanonical wrong-origin root" "not the canonical physical checkout" \
   bash "${renderer}" --repo jeryu --repo-root "jeryu=${wrong_origin}" \
     --expected-head "jeryu=${wrong_origin_head}"
 
 unrelated="${tmp}/unrelated"
 init_repo "${unrelated}" "${canonical}"
 unrelated_head="$(git -C "${unrelated}" rev-parse HEAD)"
-unrelated_main="$(git -C "${unrelated}" commit-tree \
-  "$(git -C "${unrelated}" rev-parse 'HEAD^{tree}')" -m 'synthetic protected main')"
-git -C "${unrelated}" update-ref refs/remotes/origin/main "${unrelated_main}"
-expect_failure "unrelated head" "not based on current protected main" \
+expect_failure "noncanonical alternate repository" "not the canonical physical checkout" \
   bash "${renderer}" --repo jeryu --repo-root "jeryu=${unrelated}" \
     --expected-head "jeryu=${unrelated_head}"
 
@@ -121,7 +105,7 @@ expect_failure "unselected expected head" "without matching --repo" \
 # A clean canonical linear descendant is still the wrong worktree when its
 # handed-off SHA names the protected-main parent. Refuse before touching bytes.
 wrong_descendant="${tmp}/wrong-descendant"
-git clone -q "${canonical_fixture}" "${wrong_descendant}"
+git clone -q --no-local "${canonical_fixture}" "${wrong_descendant}"
 git -C "${wrong_descendant}" remote set-url origin "${canonical}"
 git -C "${wrong_descendant}" config user.name renderer-test
 git -C "${wrong_descendant}" config user.email renderer-test@localhost
@@ -130,7 +114,7 @@ git -C "${wrong_descendant}" add wrong-descendant.txt
 git -C "${wrong_descendant}" commit -q -m 'unrelated descendant'
 handed_off_head="$(git -C "${wrong_descendant}" rev-parse HEAD^)"
 descendant_before="$(sha256sum "${wrong_descendant}/ops/ci/lib.sh" | awk '{print $1}')"
-expect_failure "wrong clean descendant" "write root HEAD mismatch" \
+expect_failure "alternate clean descendant" "not the canonical physical checkout" \
   bash "${renderer}" --repo jeryu --repo-root "jeryu=${wrong_descendant}" \
     --expected-head "jeryu=${handed_off_head}"
 descendant_after="$(sha256sum "${wrong_descendant}/ops/ci/lib.sh" | awk '{print $1}')"
@@ -146,27 +130,34 @@ cp "${here}/render-assets/require-jankurai.sh" \
 cp "${repo_root}/tool-manifest.toml" "${renderer_fixture}/"
 printf 'deliberately stale owner pin\n' > "${renderer_fixture}/generated/jankurai-pin.env"
 scoped_consumer="${tmp}/scoped-consumer"
-git clone -q "${canonical_fixture}" "${scoped_consumer}"
+git clone -q --no-local "${canonical_fixture}" "${scoped_consumer}"
 git -C "${scoped_consumer}" remote set-url origin "${canonical}"
 scoped_head="$(git -C "${scoped_consumer}" rev-parse HEAD)"
-"${toolctl}" --tool-root "${renderer_fixture}" render-tool-manifest --repo jeryu \
-  --repo-root "jeryu=${scoped_consumer}" \
-  --expected-head "jeryu=${scoped_head}" >/dev/null
+expect_failure "alternate renderer source" "exact canonical family root" \
+  "${toolctl}" --tool-root "${renderer_fixture}" render-tool-manifest --repo jeryu \
+    --repo-root "jeryu=${scoped_consumer}" \
+    --expected-head "jeryu=${scoped_head}"
 [[ "$(cat "${renderer_fixture}/generated/jankurai-pin.env")" == \
   "deliberately stale owner pin" ]] || fail "consumer render mutated manifest-owner pin"
 
-# The exact clean manifest-owner source is a valid explicit no-op write root.
-# Host CI deliberately strips ambient remotes from its physical source checkout,
-# so exercise production custody against an automatically removed standalone
-# clone with the canonical remote and a fixture protected-main ref.
+# Standalone no-local clones remain valid only as read-only drift fixtures.
+# They can never become renderer write roots, even with the canonical remote and
+# exact handed-off head.
 manifest_owner="${tmp}/manifest-owner"
 git clone -q --no-local "${repo_root}" "${manifest_owner}"
 git -C "${manifest_owner}" remote set-url origin \
   "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
-git -C "${manifest_owner}" update-ref refs/remotes/origin/main "${repo_head}"
-bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${manifest_owner}" \
-  --expected-head "jeryu-tool=${repo_head}" >/dev/null
+expect_failure "alternate manifest-owner clone" "not the canonical physical checkout" \
+  bash "${renderer}" --repo jeryu-tool --repo-root "jeryu-tool=${manifest_owner}" \
+    --expected-head "jeryu-tool=${repo_head}"
 [[ -z "$(git -C "${manifest_owner}" status --porcelain --untracked-files=all)" ]] ||
-  fail "validated no-op render dirtied the manifest-owner checkout"
+  fail "rejected alternate clone was dirtied"
 
-printf 'render-tool-manifest tests passed: keyed-future custody exact-head scope success\n'
+clone_before="$(sha256sum "${manifest_owner}/generated/jankurai-pin.env" | awk '{print $1}')"
+bash "${renderer}" --check --repo jeryu-tool \
+  --repo-root "jeryu-tool=${manifest_owner}" >/dev/null
+clone_after="$(sha256sum "${manifest_owner}/generated/jankurai-pin.env" | awk '{print $1}')"
+[[ "${clone_before}" == "${clone_after}" ]] ||
+  fail "read-only clone check mutated generated bytes"
+
+printf 'render-tool-manifest tests passed: canonical-only writes token-safe local checks closed scope\n'

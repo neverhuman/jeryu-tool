@@ -4,7 +4,7 @@
 #   ops/render-tool-manifest.sh --check   # family drift lane; never writes
 #   ops/render-tool-manifest.sh --repo NAME --repo-root NAME=/absolute/path \
 #     --expected-head NAME=40_HEX_SHA
-#                                        # explicit, custody-checked write
+#                                        # exact canonical, custody-checked write
 #
 # Thin wrapper around the locked, offline Rust control binary.
 set -euo pipefail
