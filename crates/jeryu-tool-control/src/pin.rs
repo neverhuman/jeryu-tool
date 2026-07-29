@@ -8,7 +8,7 @@ pub const PIN_MARKER_END: &str = "# END GENERATED JANKURAI PIN";
 pub const WORKFLOW_PIN_MARKER_BEGIN: &str = "# BEGIN GENERATED JANKURAI WORKFLOW PIN — DO NOT EDIT";
 pub const WORKFLOW_PIN_MARKER_END: &str = "# END GENERATED JANKURAI WORKFLOW PIN";
 
-pub const PIN_ENV_FIELDS: [(&str, &str); 14] = [
+pub const PIN_ENV_FIELDS: [(&str, &str); 26] = [
     ("JANKURAI_REPO", "repo"),
     ("JANKURAI_TAG", "tag"),
     ("JANKURAI_REV", "rev"),
@@ -23,6 +23,18 @@ pub const PIN_ENV_FIELDS: [(&str, &str); 14] = [
     ("JANKURAI_CARGO_VERSION", "cargo_version"),
     ("JANKURAI_TARGET_TRIPLE", "target_triple"),
     ("JANKURAI_BUILD_MODE", "build_mode"),
+    ("JANKURAI_PACKAGE_PATH", "package_path"),
+    ("JANKURAI_BUILDER_IMAGE", "builder_image"),
+    ("JANKURAI_BUILDER_IMAGE_ID", "builder_image_id"),
+    ("JANKURAI_LINKER_VERSION", "linker_version"),
+    ("JANKURAI_GLIBC_VERSION", "glibc_version"),
+    ("JANKURAI_VENDOR_FILES_SHA256", "vendor_files_sha256"),
+    ("JANKURAI_VENDOR_FILE_COUNT", "vendor_file_count"),
+    ("JANKURAI_CARGO_CONFIG_SHA256", "cargo_config_sha256"),
+    ("JANKURAI_BUILD_ENVIRONMENT", "build_environment"),
+    ("JANKURAI_RUSTFLAGS", "rustflags"),
+    ("JANKURAI_BUILD_COMMAND", "build_command"),
+    ("JANKURAI_BUILD_CONTEXT_SHA256", "build_context_sha256"),
 ];
 
 const TOP_LEVEL_FIELDS: [&str; 4] = ["schema_version", "jankurai", "floors", "tools"];
@@ -170,6 +182,9 @@ impl Pin {
             "source_archive_sha256",
             "cargo_lock_sha256",
             "binary_sha256",
+            "vendor_files_sha256",
+            "cargo_config_sha256",
+            "build_context_sha256",
         ] {
             if !digest.is_match(self.get(key)) {
                 return Err(format!("invalid {key}: expected SHA-256"));
@@ -219,8 +234,54 @@ impl Pin {
         if !target.is_match(self.get("target_triple")) {
             return Err("invalid target_triple".to_owned());
         }
-        if self.get("build_mode") != "cargo-install-locked-offline-path-v1" {
+        if self.get("build_mode") != "oci-vendor-locked-offline-workspace-member-v2" {
             return Err("invalid build_mode".to_owned());
+        }
+        if self.get("package_path") != "crates/jankurai" {
+            return Err("invalid package_path".to_owned());
+        }
+        let image = Regex::new(r"^rust@sha256:[0-9a-f]{64}$").expect("constant regex");
+        if !image.is_match(self.get("builder_image")) {
+            return Err("invalid builder_image".to_owned());
+        }
+        let image_id = Regex::new(r"^sha256:[0-9a-f]{64}$").expect("constant regex");
+        if !image_id.is_match(self.get("builder_image_id")) {
+            return Err("invalid builder_image_id".to_owned());
+        }
+        if self.get("builder_image").strip_prefix("rust@") != Some(self.get("builder_image_id")) {
+            return Err("builder_image must resolve to builder_image_id".to_owned());
+        }
+        if self.get("linker_version") != "GNU ld (GNU Binutils for Debian) 2.40" {
+            return Err("invalid linker_version".to_owned());
+        }
+        if self.get("glibc_version") != "ldd (Debian GLIBC 2.36-9+deb12u14) 2.36" {
+            return Err("invalid glibc_version".to_owned());
+        }
+        let file_count = self
+            .get("vendor_file_count")
+            .parse::<usize>()
+            .map_err(|_| "invalid vendor_file_count".to_owned())?;
+        if file_count == 0 {
+            return Err("vendor_file_count must be positive".to_owned());
+        }
+        if self.get("build_environment")
+            != "CARGO_NET_OFFLINE=true,HOME=/tmp,LANG=C,LC_ALL=C,SOURCE_DATE_EPOCH=0,TZ=UTC"
+        {
+            return Err("invalid build_environment".to_owned());
+        }
+        if self.get("rustflags")
+            != "--remap-path-prefix=/opt/jeryu/jankurai=/jankurai-build/source \
+--remap-path-prefix=/opt/jeryu/vendor=/jankurai-build/vendor \
+--remap-path-prefix=/opt/jeryu/target=/jankurai-build/target \
+--remap-path-prefix=/usr/local/cargo=/jankurai-build/cargo"
+        {
+            return Err("invalid rustflags".to_owned());
+        }
+        if self.get("build_command")
+            != "cargo install --locked --offline --path \
+/opt/jeryu/jankurai/crates/jankurai --root /opt/jeryu/out --bin jankurai"
+        {
+            return Err("invalid build_command".to_owned());
         }
         Ok(())
     }
@@ -340,8 +401,8 @@ mod tests {
         assert!(Pin::parse(&executable).is_err());
 
         let breakout = text.replacen(
-            "build_mode            = \"cargo-install-locked-offline-path-v1\"",
-            r#"build_mode            = "cargo-install-locked-offline-path-v1\"; forbidden; echo \""#,
+            "build_mode            = \"oci-vendor-locked-offline-workspace-member-v2\"",
+            r#"build_mode            = "oci-vendor-locked-offline-workspace-member-v2\"; forbidden; echo \""#,
             1,
         );
         assert!(Pin::parse(&breakout).is_err());

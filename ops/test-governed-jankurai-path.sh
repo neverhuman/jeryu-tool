@@ -4,6 +4,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_lib="${here}/ci/lib.sh"
+source "${source_lib}"
 production_broker="/opt/jain-ci/authority/release-bin/jankurai"
 production_governed="/home/ubuntu/.jeryu/bin/jankurai"
 tmp="$(mktemp -d /tmp/test-governed-jankurai-path.XXXXXX)"
@@ -61,7 +62,7 @@ fi
 [[ "$("${governed_source}" --version)" == 'jankurai 1.6.11' ]] ||
   fail "governed Jankurai test source has the wrong version"
 [[ "$(sha256sum "${governed_source}" | awk '{print $1}')" == \
-   '96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa' ]] ||
+   "${JERYU_JANKURAI_SHA256}" ]] ||
   fail "governed Jankurai test source has the wrong digest"
 
 broker_bin="${tmp}/broker/bin/jankurai"
@@ -77,8 +78,6 @@ chmod 0555 "${older_local_bin}"
 
 # Bind the private ordinary-mode fixture to a release-authoritative receipt.
 # The content-addressed filename is the receipt's own digest.
-# shellcheck source=ops/ci/lib.sh
-source "${source_lib}"
 ordinary_receipt_tmp="${tmp}/ordinary-receipt.json"
 jq -n \
   --arg remote "${JERYU_JANKURAI_SOURCE_REPO}" \
@@ -91,19 +90,38 @@ jq -n \
   --arg cargo "${JERYU_JANKURAI_CARGO_VERSION}" \
   --arg triple "${JERYU_JANKURAI_TARGET_TRIPLE}" \
   --arg mode "${JERYU_JANKURAI_BUILD_MODE}" \
+  --arg package_path "${JERYU_JANKURAI_PACKAGE_PATH}" \
+  --arg builder_image "${JERYU_JANKURAI_BUILDER_IMAGE}" \
+  --arg builder_image_id "${JERYU_JANKURAI_BUILDER_IMAGE_ID}" \
+  --arg linker "${JERYU_JANKURAI_LINKER_VERSION}" \
+  --arg glibc "${JERYU_JANKURAI_GLIBC_VERSION}" \
+  --arg vendor "${JERYU_JANKURAI_VENDOR_FILES_SHA256}" \
+  --arg vendor_count "${JERYU_JANKURAI_VENDOR_FILE_COUNT}" \
+  --arg cargo_config "${JERYU_JANKURAI_CARGO_CONFIG_SHA256}" \
+  --arg environment "${JERYU_JANKURAI_BUILD_ENVIRONMENT}" \
+  --arg rustflags "${JERYU_JANKURAI_RUSTFLAGS}" \
+  --arg command "${JERYU_JANKURAI_BUILD_COMMAND}" \
+  --arg context "${JERYU_JANKURAI_BUILD_CONTEXT_SHA256}" \
   --arg digest "${JERYU_JANKURAI_SHA256}" \
   --arg version "${JERYU_JANKURAI_VERSION}" \
   --arg path "${ambient_bin}" \
-  '{schema:"jeryu.jankurai-installation/v1",
+  '{schema:"jeryu.jankurai-installation/v2",
     source:{remote:$remote,commit:$commit,tag:$tag,tree:$tree,
       archive_sha256:$archive,cargo_lock_sha256:$lock,
       verification:"release-authoritative"},
     build:{rustc:$rustc,cargo:$cargo,target_triple:$triple,mode:$mode,
-      cargo_net_offline:true,dedicated_cargo_home:true,
+      package_path:$package_path,builder_image:$builder_image,
+      builder_image_id:$builder_image_id,linker:$linker,glibc:$glibc,
+      vendor_files_sha256:$vendor,vendor_file_count:$vendor_count,
+      cargo_config_sha256:$cargo_config,environment:$environment,rustflags:$rustflags,
+      command:$command,context_sha256:$context,cargo_net_offline:true,
+      closed_vendor:true,network_none:true,read_only_root:true,non_root:true,
+      capabilities_dropped:true,no_new_privileges:true,
+      container_engine_path:"/usr/bin/docker",
       git_global_config_disabled:true,git_system_config_disabled:true,
       git_http_follow_redirects:false,git_terminal_prompt:false,
       jankurai_update_check:false,
-      network_scope:"local-forge-source-plus-offline-cargo",
+      network_scope:"local-forge-source-plus-closed-vendor-network-none",
       no_proxy:"127.0.0.1,localhost,::1"},
     governance:{status:"governed",
       manifest_repo:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",

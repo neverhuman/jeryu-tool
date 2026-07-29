@@ -11,6 +11,11 @@ Never hardcode a jankurai rev/tag/version anywhere in the family — change it h
 and run `ops/render-tool-manifest.sh`. `generated/jankurai-pin.env` is rendered,
 not authored.
 
+The binary is also single-authority. `ops/build-jankurai-hermetic.sh` must
+reproduce it from the manifest's immutable source, closed vendor inventory, and
+digest-pinned network-disabled builder. Host and sandbox consumers render the
+same digest; neither may introduce a local alternate.
+
 `tools-registry.toml` + `tasks/` are the single source of truth for reusable
 tools (shared crates / TS / React / shell libs) and their build queue. Discovery
 of new candidates lives in `jeryu-tool-finder`, which files proposals here;

@@ -1,5 +1,18 @@
 # Changelog
 
+## jeryu-tool-v5.1.0-split.4 — 2026-07-29
+
+### Changed
+- Replaced the ambient-host Jankurai build with one digest-pinned, non-root,
+  network-disabled OCI build over the immutable source and a closed,
+  checksum-inventoried Cargo vendor closure.
+- Rotated the governed Jankurai binary digest without moving its immutable
+  source tag. Host and sandbox consumers must render this same authority; a
+  consumer-local binary identity remains invalid.
+- Installation receipts now bind the builder image, linker and glibc identity,
+  vendor and Cargo configuration inventories, exact build environment and
+  command, canonical path remaps, and complete build-context digest.
+
 ## jeryu-tool-v5.1.0-split.1 — 2026-07-15
 
 ### Added

@@ -23,12 +23,13 @@ registry.
 
 | Path | Purpose |
 |---|---|
-| `tool-manifest.toml` | **Audit source of truth**: local-forge commit/tag, source tree/archive and lock digests, exact version, reproducible build environment, binary digest, per-profile score floors, and per-tool default modes. |
+| `tool-manifest.toml` | **Audit source of truth**: local-forge commit/tag, source tree/archive and lock digests, closed vendor and builder identities, exact build contract, binary digest, per-profile score floors, and per-tool default modes. |
 | `tools-registry.toml` | **Registry source of truth**: one `[[tool]]` per reusable tool — kind, status, adopting/candidate repos, realized + anticipated LOC saved. |
 | `tasks/NNNN-*.toml` | Reusable-tool **build queue**: build-this-tool / migrate-these-repos work items. |
 | `ops/registry-summary.sh` | Runs the locked Rust validator for the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
 | `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
-| `ops/install-jankurai.sh` | Verifies the immutable local-forge source, builds from the lockfile offline, atomically installs `/home/ubuntu/.jeryu/bin/jankurai`, preserves rollback content, and writes a content-addressed receipt. |
+| `ops/build-jankurai-hermetic.sh` | Materializes and verifies the closed Cargo vendor inventory, then builds the immutable source as a non-root user in the digest-pinned read-only OCI builder with network disabled. |
+| `ops/install-jankurai.sh` | Verifies the immutable local-forge source, delegates to the hermetic builder, atomically installs `/home/ubuntu/.jeryu/bin/jankurai`, preserves rollback content, and writes a content-addressed receipt. |
 | `ops/qualify-jankurai-candidate.sh` | Builds the exact premerge candidate into a temporary root and persists a content-addressed diagnostic receipt; it can never target the governed host root. |
 | `ops/test-install-jankurai.sh` | Proves identity-bound idempotency and safe refusal for receipt tamper, external sources/redirects, wrong digests, wrong versions, offline cache misses, interrupted installs, and rollback faults. |
 | `ops/test-render-tool-manifest.sh` | Proves unscoped rendering is check-only and write mode rejects missing custody, dirty roots, wrong origins, and heads not based on current protected main. |
@@ -53,7 +54,9 @@ score, and the security lane.
 1. Edit `[jankurai]` in `tool-manifest.toml`.
 2. Commit the manifest update, then run `JERYU_FORGE_TOKEN_FILE=<absolute-private-token-path> ops/render-tool-manifest.sh --repo <name> --repo-root <name>=/home/ubuntu/jain-split/jeryu-split/<name> --expected-head <name>=<40-hex-sha>` for every explicitly claimed root. Unscoped invocation is check-only; writes require the exact handed-off clean canonical physical checkout based on current protected `main`. Alternate clones and registered worktrees are read-only fixtures and can never receive generated writes; the token path must name an owner-held mode-0600, single-link regular file.
 3. Land every consumer and this manifest through exact-head protected PRs, then require `ops/render-tool-manifest.sh --check` to be drift-free.
-4. Host: `ops/install-jankurai.sh` rebuilds offline and atomically installs only when source, build, binary, path, and receipt all match.
+4. Host: `ops/install-jankurai.sh` rebuilds through the exact digest-pinned,
+   network-disabled OCI contract and atomically installs only when source,
+   vendor, build context, binary, path, and receipt all match.
 5. Sandbox: rebuild the agent-sandbox image from the same identity and verify its baked binary digest before any network-isolated lane runs.
 
 `ops/render-tool-manifest.sh --check` fails CI if any consumer drifted from the

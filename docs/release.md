@@ -20,8 +20,9 @@ Before the protected PR is approved or merged:
 - qualify the exact manifest candidate only in a temporary root; its receipt
   must say `test_mode=true`, `source.verification=diagnostic-candidate`, and
   `governance.status=diagnostic-candidate`
-- confirm source tree/archive, Cargo.lock, Rust/Cargo/target, and binary SHA-256
-  evidence all match `tool-manifest.toml`
+- confirm source tree/archive, Cargo.lock, closed vendor/config inventories,
+  builder image/linker/glibc, Rust/Cargo/target, build context, and binary
+  SHA-256 evidence all match `tool-manifest.toml`
 - verify renderer custody, offline-fetch refusal, receipt tamper, interrupted
   install, corrupt rollback object, restore, and wrong-identity tests
 - confirm the immutable source and prior content-addressed binary provide the
@@ -30,9 +31,11 @@ Before the protected PR is approved or merged:
 After protected fast-forward merge, cut the immutable tag named by `VERSION` at
 the merged commit. Then run `ops/install-jankurai.sh` from a clean checkout of
 that exact protected main. The installer reads back immutable-main protection,
-rebuilds from the local forge with Cargo offline, verifies all pinned digests,
-atomically installs the binary, and emits the production receipt. Only after
-that receipt exists may consumer PRs require the governed host binary.
+materializes the exact local-forge source and closed vendor inventory, and
+builds as a non-root user in the digest-pinned read-only OCI image with
+`--network none`. It verifies all pinned digests, atomically installs the
+binary, and emits the production receipt. Only after that receipt exists may
+consumer PRs require the governed host binary.
 
 The family-wide renderer check becomes green as the protected consumer PRs
 land. It is the rollout monitor: any source, version, or digest drift fails.
@@ -43,9 +46,11 @@ public runtime surface.
 
 The installation receipt binds the local source remote, immutable Jankurai tag
 and commit, Git tree/archive and Cargo.lock checksums, Rust and Cargo versions,
-target triple, offline build mode, binary SHA-256 and version output, absolute
-installation path, previous-binary digest, and exact protected `jeryu-tool`
-manifest commit/tree/bytes. Test receipts are never release authority.
+target triple, builder image and native tool identities, vendor/config/context
+digests, exact environment/command/remaps, network and privilege isolation,
+binary SHA-256 and version output, absolute installation path,
+previous-binary digest, and exact protected `jeryu-tool` manifest
+commit/tree/bytes. Test receipts are never release authority.
 
 ## Rollback
 

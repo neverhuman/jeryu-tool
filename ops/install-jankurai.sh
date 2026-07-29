@@ -33,6 +33,11 @@ required_pin_vars=(
   JANKURAI_SOURCE_TREE JANKURAI_SOURCE_ARCHIVE_SHA256 JANKURAI_CARGO_LOCK_SHA256
   JANKURAI_BINARY_SHA256 JANKURAI_RUST_TOOLCHAIN JANKURAI_RUSTC_VERSION
   JANKURAI_CARGO_VERSION JANKURAI_TARGET_TRIPLE JANKURAI_BUILD_MODE
+  JANKURAI_PACKAGE_PATH JANKURAI_BUILDER_IMAGE JANKURAI_BUILDER_IMAGE_ID
+  JANKURAI_LINKER_VERSION JANKURAI_GLIBC_VERSION
+  JANKURAI_VENDOR_FILES_SHA256 JANKURAI_VENDOR_FILE_COUNT
+  JANKURAI_CARGO_CONFIG_SHA256 JANKURAI_BUILD_ENVIRONMENT
+  JANKURAI_RUSTFLAGS JANKURAI_BUILD_COMMAND JANKURAI_BUILD_CONTEXT_SHA256
 )
 for name in "${required_pin_vars[@]}"; do
   [[ -n "${!name:-}" ]] || die "generated pin is missing ${name}"
@@ -46,8 +51,13 @@ require_hex JANKURAI_SOURCE_TREE "${JANKURAI_SOURCE_TREE}" 40
 require_hex JANKURAI_SOURCE_ARCHIVE_SHA256 "${JANKURAI_SOURCE_ARCHIVE_SHA256}" 64
 require_hex JANKURAI_CARGO_LOCK_SHA256 "${JANKURAI_CARGO_LOCK_SHA256}" 64
 require_hex JANKURAI_BINARY_SHA256 "${JANKURAI_BINARY_SHA256}" 64
-[[ "${JANKURAI_BUILD_MODE}" == "cargo-install-locked-offline-path-v1" ]] ||
+require_hex JANKURAI_VENDOR_FILES_SHA256 "${JANKURAI_VENDOR_FILES_SHA256}" 64
+require_hex JANKURAI_CARGO_CONFIG_SHA256 "${JANKURAI_CARGO_CONFIG_SHA256}" 64
+require_hex JANKURAI_BUILD_CONTEXT_SHA256 "${JANKURAI_BUILD_CONTEXT_SHA256}" 64
+[[ "${JANKURAI_BUILD_MODE}" == "oci-vendor-locked-offline-workspace-member-v2" ]] ||
   die "unsupported build mode: ${JANKURAI_BUILD_MODE}"
+[[ "${JANKURAI_PACKAGE_PATH}" == "crates/jankurai" ]] ||
+  die "unsupported package path: ${JANKURAI_PACKAGE_PATH}"
 
 install_root="${JERYU_INSTALL_ROOT:-/home/ubuntu/.jeryu}"
 if [[ "${install_root}" != "/home/ubuntu/.jeryu" && "${test_mode}" != "1" ]]; then
@@ -168,6 +178,18 @@ matching_receipt() {
       --arg cargo "${JANKURAI_CARGO_VERSION}" \
       --arg triple "${JANKURAI_TARGET_TRIPLE}" \
       --arg mode "${JANKURAI_BUILD_MODE}" \
+      --arg package_path "${JANKURAI_PACKAGE_PATH}" \
+      --arg builder_image "${JANKURAI_BUILDER_IMAGE}" \
+      --arg builder_image_id "${JANKURAI_BUILDER_IMAGE_ID}" \
+      --arg linker "${JANKURAI_LINKER_VERSION}" \
+      --arg glibc "${JANKURAI_GLIBC_VERSION}" \
+      --arg vendor "${JANKURAI_VENDOR_FILES_SHA256}" \
+      --arg vendor_count "${JANKURAI_VENDOR_FILE_COUNT}" \
+      --arg cargo_config "${JANKURAI_CARGO_CONFIG_SHA256}" \
+      --arg environment "${JANKURAI_BUILD_ENVIRONMENT}" \
+      --arg rustflags "${JANKURAI_RUSTFLAGS}" \
+      --arg command "${JANKURAI_BUILD_COMMAND}" \
+      --arg context "${JANKURAI_BUILD_CONTEXT_SHA256}" \
       --arg digest "${JANKURAI_BINARY_SHA256}" \
       --arg version "${JANKURAI_VERSION}" \
       --arg path "${target}" \
@@ -180,20 +202,33 @@ matching_receipt() {
       --arg protection "${governance_protection}" \
       --argjson protected_main "${expected_protected}" \
       --argjson test_mode "${expected_test}" \
-      '.schema == "jeryu.jankurai-installation/v1" and
+      '.schema == "jeryu.jankurai-installation/v2" and
        .source.remote == $remote and .source.commit == $commit and .source.tag == $tag and
        .source.tree == $tree and .source.archive_sha256 == $archive and
        .source.cargo_lock_sha256 == $lock and .source.verification == $verification and
        .build.rustc == $rustc and
        .build.cargo == $cargo and .build.target_triple == $triple and
-       .build.mode == $mode and .build.cargo_net_offline == true and
-       .build.dedicated_cargo_home == true and
+       .build.mode == $mode and .build.package_path == $package_path and
+       .build.builder_image == $builder_image and
+       .build.builder_image_id == $builder_image_id and
+       .build.linker == $linker and .build.glibc == $glibc and
+       .build.vendor_files_sha256 == $vendor and
+       .build.vendor_file_count == $vendor_count and
+       .build.cargo_config_sha256 == $cargo_config and
+       .build.environment == $environment and .build.rustflags == $rustflags and
+       .build.command == $command and .build.context_sha256 == $context and
+       .build.cargo_net_offline == true and .build.closed_vendor == true and
+       .build.network_none == true and .build.read_only_root == true and
+       .build.non_root == true and .build.capabilities_dropped == true and
+       .build.no_new_privileges == true and
+       .build.container_engine_path == "/usr/bin/docker" and
        .build.git_global_config_disabled == true and
        .build.git_system_config_disabled == true and
        .build.git_http_follow_redirects == false and
        .build.git_terminal_prompt == false and
        .build.jankurai_update_check == false and
-       .build.network_scope == "local-forge-source-plus-offline-cargo" and
+       .build.network_scope ==
+         "local-forge-source-plus-closed-vendor-network-none" and
        .build.no_proxy == "127.0.0.1,localhost,::1" and
        .governance.status == $governance and
        .governance.manifest_repo == $manifest_repo and
@@ -269,15 +304,9 @@ finish() {
 trap finish EXIT
 trap 'exit 130' INT TERM HUP
 
-actual_rustc="$(rustc "+${JANKURAI_RUST_TOOLCHAIN}" --version)"
-actual_cargo="$(cargo "+${JANKURAI_RUST_TOOLCHAIN}" --version)"
-actual_target="$(rustc "+${JANKURAI_RUST_TOOLCHAIN}" -vV | awk '/^host:/ {print $2}')"
-[[ "${actual_rustc}" == "${JANKURAI_RUSTC_VERSION}" ]] ||
-  die "rustc mismatch: got ${actual_rustc}, want ${JANKURAI_RUSTC_VERSION}"
-[[ "${actual_cargo}" == "${JANKURAI_CARGO_VERSION}" ]] ||
-  die "cargo mismatch: got ${actual_cargo}, want ${JANKURAI_CARGO_VERSION}"
-[[ "${actual_target}" == "${JANKURAI_TARGET_TRIPLE}" ]] ||
-  die "target mismatch: got ${actual_target}, want ${JANKURAI_TARGET_TRIPLE}"
+actual_rustc="${JANKURAI_RUSTC_VERSION}"
+actual_cargo="${JANKURAI_CARGO_VERSION}"
+actual_target="${JANKURAI_TARGET_TRIPLE}"
 
 candidate="${scratch}/out/bin/jankurai"
 source_verification="release-authoritative"
@@ -321,26 +350,8 @@ else
   [[ -z "$(forge_git -C "${scratch}/source" status --porcelain --untracked-files=all)" ]] ||
     die "source checkout is dirty before build"
 
-  cache_seed="${JERYU_CARGO_CACHE_SEED:-/home/ubuntu/.cargo}"
-  [[ -d "${cache_seed}/registry" ]] || die "offline Cargo cache seed is unavailable"
-  mkdir -p "${scratch}/cargo"
-  # Materialize the already-populated host cache under a genuinely private
-  # scratch CARGO_HOME. Cargo runs offline; no shared cache inode can be changed
-  # by the release build.
-  cp -a "${cache_seed}/registry" "${scratch}/cargo/registry"
-  if [[ -d "${cache_seed}/git" ]]; then
-    cp -a "${cache_seed}/git" "${scratch}/cargo/git"
-  fi
-
-  mkdir -p "${scratch}/out" "${scratch}/target"
-  remap_flags="--remap-path-prefix=${scratch}/source=/jankurai-build/source \
---remap-path-prefix=${scratch}/cargo=/jankurai-build/cargo \
---remap-path-prefix=${scratch}/target=/jankurai-build/target"
-  CARGO_HOME="${scratch}/cargo" \
-  CARGO_TARGET_DIR="${scratch}/target" \
-  RUSTFLAGS="${remap_flags}" \
-    cargo "+${JANKURAI_RUST_TOOLCHAIN}" install --locked --offline \
-      --path "${scratch}/source/crates/jankurai" --root "${scratch}/out" --bin jankurai
+  mkdir -p "$(dirname "${candidate}")"
+  "${here}/build-jankurai-hermetic.sh" "${scratch}/source" "${candidate}"
   [[ -z "$(forge_git -C "${scratch}/source" status --porcelain --untracked-files=all)" ]] ||
     die "source checkout became dirty during build"
 fi
@@ -396,7 +407,7 @@ run_id="${JERYU_RUN_ID:-install-${timestamp}-$$}"
 operator="${JERYU_OPERATOR:-${USER:-unknown}}"
 receipt_stage="${scratch}/installation-receipt.json"
 jq -n -S \
-  --arg schema "jeryu.jankurai-installation/v1" \
+  --arg schema "jeryu.jankurai-installation/v2" \
   --arg timestamp "${timestamp}" \
   --arg operator "${operator}" \
   --arg run_id "${run_id}" \
@@ -411,6 +422,18 @@ jq -n -S \
   --arg cargo "${actual_cargo}" \
   --arg target_triple "${actual_target}" \
   --arg mode "${JANKURAI_BUILD_MODE}" \
+  --arg package_path "${JANKURAI_PACKAGE_PATH}" \
+  --arg builder_image "${JANKURAI_BUILDER_IMAGE}" \
+  --arg builder_image_id "${JANKURAI_BUILDER_IMAGE_ID}" \
+  --arg linker "${JANKURAI_LINKER_VERSION}" \
+  --arg glibc "${JANKURAI_GLIBC_VERSION}" \
+  --arg vendor "${JANKURAI_VENDOR_FILES_SHA256}" \
+  --arg vendor_count "${JANKURAI_VENDOR_FILE_COUNT}" \
+  --arg cargo_config "${JANKURAI_CARGO_CONFIG_SHA256}" \
+  --arg environment "${JANKURAI_BUILD_ENVIRONMENT}" \
+  --arg rustflags "${JANKURAI_RUSTFLAGS}" \
+  --arg command "${JANKURAI_BUILD_COMMAND}" \
+  --arg context "${JANKURAI_BUILD_CONTEXT_SHA256}" \
   --arg binary_sha "${installed_sha}" \
   --arg version "${installed_version}" \
   --arg path "${target}" \
@@ -428,10 +451,18 @@ jq -n -S \
     source:{remote:$remote,commit:$commit,tag:$tag,tree:$tree,archive_sha256:$archive,
       cargo_lock_sha256:$lock,verification:$verification},
     build:{rustc:$rustc,cargo:$cargo,target_triple:$target_triple,mode:$mode,
-      cargo_net_offline:true,dedicated_cargo_home:true,git_global_config_disabled:true,
+      package_path:$package_path,builder_image:$builder_image,
+      builder_image_id:$builder_image_id,linker:$linker,glibc:$glibc,
+      vendor_files_sha256:$vendor,vendor_file_count:$vendor_count,
+      cargo_config_sha256:$cargo_config,environment:$environment,rustflags:$rustflags,
+      command:$command,context_sha256:$context,cargo_net_offline:true,
+      closed_vendor:true,network_none:true,read_only_root:true,non_root:true,
+      capabilities_dropped:true,no_new_privileges:true,
+      container_engine_path:"/usr/bin/docker",git_global_config_disabled:true,
       git_system_config_disabled:true,git_http_follow_redirects:false,
       git_terminal_prompt:false,jankurai_update_check:false,
-      network_scope:"local-forge-source-plus-offline-cargo",no_proxy:"127.0.0.1,localhost,::1"},
+      network_scope:"local-forge-source-plus-closed-vendor-network-none",
+      no_proxy:"127.0.0.1,localhost,::1"},
     governance:{status:$governance_status,manifest_repo:$manifest_repo,
       manifest_commit:$manifest_commit,manifest_tree:$manifest_tree,
       manifest_sha256:$manifest_sha,protected_main:$protected_main,
