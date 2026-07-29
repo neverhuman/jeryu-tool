@@ -347,6 +347,54 @@ impl Pin {
                 "export JERYU_JANKURAI_BUILD_MODE=\"{}\"",
                 self.get("build_mode")
             ),
+            format!(
+                "export JERYU_JANKURAI_PACKAGE_PATH=\"{}\"",
+                self.get("package_path")
+            ),
+            format!(
+                "export JERYU_JANKURAI_BUILDER_IMAGE=\"{}\"",
+                self.get("builder_image")
+            ),
+            format!(
+                "export JERYU_JANKURAI_BUILDER_IMAGE_ID=\"{}\"",
+                self.get("builder_image_id")
+            ),
+            format!(
+                "export JERYU_JANKURAI_LINKER_VERSION=\"{}\"",
+                self.get("linker_version")
+            ),
+            format!(
+                "export JERYU_JANKURAI_GLIBC_VERSION=\"{}\"",
+                self.get("glibc_version")
+            ),
+            format!(
+                "export JERYU_JANKURAI_VENDOR_FILES_SHA256=\"{}\"",
+                self.get("vendor_files_sha256")
+            ),
+            format!(
+                "export JERYU_JANKURAI_VENDOR_FILE_COUNT=\"{}\"",
+                self.get("vendor_file_count")
+            ),
+            format!(
+                "export JERYU_JANKURAI_CARGO_CONFIG_SHA256=\"{}\"",
+                self.get("cargo_config_sha256")
+            ),
+            format!(
+                "export JERYU_JANKURAI_BUILD_ENVIRONMENT=\"{}\"",
+                self.get("build_environment")
+            ),
+            format!(
+                "export JERYU_JANKURAI_RUSTFLAGS=\"{}\"",
+                self.get("rustflags")
+            ),
+            format!(
+                "export JERYU_JANKURAI_BUILD_COMMAND=\"{}\"",
+                self.get("build_command")
+            ),
+            format!(
+                "export JERYU_JANKURAI_BUILD_CONTEXT_SHA256=\"{}\"",
+                self.get("build_context_sha256")
+            ),
             PIN_MARKER_END.to_owned(),
         ]
         .join("\n")
