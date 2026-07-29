@@ -52,7 +52,7 @@ fi
 mkdir -p "${tmp}/broker/bin" "${tmp}/attacker/bin" \
   "${tmp}/home/.jeryu/bin" "${tmp}/home/.jeryu/receipts/jankurai/sha256" \
   "${tmp}/home/.local/bin"
-governed_source="/usr/local/libexec/jain/jankurai"
+governed_source="${JERYU_GOVERNED_JANKURAI_BIN:-/usr/local/libexec/jain/jankurai}"
 if [[ ! -x "${governed_source}" ]]; then
   governed_source="$(command -v jankurai 2>/dev/null || true)"
 fi
