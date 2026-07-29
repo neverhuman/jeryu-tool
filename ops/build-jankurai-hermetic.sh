@@ -91,10 +91,13 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "${scratch}/vendor" "${scratch}/target" "${scratch}/out"
 
-CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+if ! CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   cargo "+${JANKURAI_RUST_TOOLCHAIN}" vendor --locked --offline --versioned-dirs \
   --manifest-path "${source_root}/Cargo.toml" "${scratch}/vendor" \
-  >"${scratch}/vendor-config.raw" 2>"${scratch}/vendor.log"
+  >"${scratch}/vendor-config.raw" 2>"${scratch}/vendor.log"; then
+  tail -n 20 "${scratch}/vendor.log" >&2
+  die "closed vendor materialization failed offline"
+fi
 sed 's#^directory = ".*"$#directory = "/opt/jeryu/vendor"#' \
   "${scratch}/vendor-config.raw" >"${scratch}/cargo-config.toml"
 printf '\n[net]\noffline = true\n' >>"${scratch}/cargo-config.toml"

@@ -4,7 +4,7 @@ set -euo pipefail
 # BEGIN GENERATED JANKURAI PIN — DO NOT EDIT
 export JERYU_JANKURAI_SOURCE_REPO="http://127.0.0.1:8787/git/jeryu/jankurai.git"
 export JERYU_JANKURAI_VERSION="jankurai 1.6.11"
-export JERYU_JANKURAI_SHA256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
+export JERYU_JANKURAI_SHA256="59f4ec903c75a869de365145432a97bdf574b517ce64ad9613088437a9f37b4b"
 export JERYU_JANKURAI_SOURCE_REV="4dfbdfa3585f1928d5f996d7b5e14608dff14a03"
 export JERYU_JANKURAI_SOURCE_TAG="v1.6.11-deadlang-precision-split.2"
 export JERYU_JANKURAI_SOURCE_TREE="7e5d501aa6f0ee6ced9a48c6288a9943d0b9573c"
@@ -14,7 +14,7 @@ export JERYU_JANKURAI_RUST_TOOLCHAIN="1.95.0"
 export JERYU_JANKURAI_RUSTC_VERSION="rustc 1.95.0 (59807616e 2026-04-14)"
 export JERYU_JANKURAI_CARGO_VERSION="cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
 export JERYU_JANKURAI_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
-export JERYU_JANKURAI_BUILD_MODE="cargo-install-locked-offline-path-v1"
+export JERYU_JANKURAI_BUILD_MODE="oci-vendor-locked-offline-workspace-member-v2"
 # END GENERATED JANKURAI PIN
 
 require_tool() {
@@ -124,6 +124,18 @@ require_jankurai() {
       --arg cargo "${JERYU_JANKURAI_CARGO_VERSION}" \
       --arg triple "${JERYU_JANKURAI_TARGET_TRIPLE}" \
       --arg mode "${JERYU_JANKURAI_BUILD_MODE}" \
+      --arg package_path "${JERYU_JANKURAI_PACKAGE_PATH}" \
+      --arg builder_image "${JERYU_JANKURAI_BUILDER_IMAGE}" \
+      --arg builder_image_id "${JERYU_JANKURAI_BUILDER_IMAGE_ID}" \
+      --arg linker "${JERYU_JANKURAI_LINKER_VERSION}" \
+      --arg glibc "${JERYU_JANKURAI_GLIBC_VERSION}" \
+      --arg vendor "${JERYU_JANKURAI_VENDOR_FILES_SHA256}" \
+      --arg vendor_count "${JERYU_JANKURAI_VENDOR_FILE_COUNT}" \
+      --arg cargo_config "${JERYU_JANKURAI_CARGO_CONFIG_SHA256}" \
+      --arg environment "${JERYU_JANKURAI_BUILD_ENVIRONMENT}" \
+      --arg rustflags "${JERYU_JANKURAI_RUSTFLAGS}" \
+      --arg command "${JERYU_JANKURAI_BUILD_COMMAND}" \
+      --arg context "${JERYU_JANKURAI_BUILD_CONTEXT_SHA256}" \
       --arg digest "${JERYU_JANKURAI_SHA256}" \
       --arg version "${JERYU_JANKURAI_VERSION}" \
       --arg path "${bin}" \
@@ -132,17 +144,31 @@ require_jankurai() {
       --arg protection "${expected_protection}" \
       --argjson protected_main "${expected_protected}" \
       --argjson test_mode "${expected_test}" \
-      '.schema == "jeryu.jankurai-installation/v1" and
+      '.schema == "jeryu.jankurai-installation/v2" and
        .source.remote == $remote and .source.commit == $commit and .source.tag == $tag and
        .source.tree == $tree and .source.archive_sha256 == $archive and
        .source.cargo_lock_sha256 == $lock and .source.verification == $verification and
        .build.rustc == $rustc and .build.cargo == $cargo and
        .build.target_triple == $triple and .build.mode == $mode and
-       .build.cargo_net_offline == true and .build.dedicated_cargo_home == true and
+       .build.package_path == $package_path and
+       .build.builder_image == $builder_image and
+       .build.builder_image_id == $builder_image_id and
+       .build.linker == $linker and .build.glibc == $glibc and
+       .build.vendor_files_sha256 == $vendor and
+       .build.vendor_file_count == $vendor_count and
+       .build.cargo_config_sha256 == $cargo_config and
+       .build.environment == $environment and .build.rustflags == $rustflags and
+       .build.command == $command and .build.context_sha256 == $context and
+       .build.cargo_net_offline == true and .build.closed_vendor == true and
+       .build.network_none == true and .build.read_only_root == true and
+       .build.non_root == true and .build.capabilities_dropped == true and
+       .build.no_new_privileges == true and
+       .build.container_engine_path == "/usr/bin/docker" and
        .build.git_global_config_disabled == true and .build.git_system_config_disabled == true and
        .build.git_http_follow_redirects == false and .build.git_terminal_prompt == false and
        .build.jankurai_update_check == false and
-       .build.network_scope == "local-forge-source-plus-offline-cargo" and
+       .build.network_scope ==
+         "local-forge-source-plus-closed-vendor-network-none" and
        .build.no_proxy == "127.0.0.1,localhost,::1" and
        .governance.status == $governance and
        .governance.manifest_repo ==
