@@ -68,6 +68,7 @@ else
   candidate_bin="${JERYU_JANKURAI_BIN:?candidate qualification did not select Jankurai}"
   candidate_bin_dir="$(dirname "${candidate_bin}")"
   export PATH="${candidate_bin_dir}:${PATH}"
+  export JERYU_GOVERNED_JANKURAI_BIN="${candidate_bin}"
   source ops/ci/lib.sh
   require_jankurai
   qualification_mode="premerge-candidate"
