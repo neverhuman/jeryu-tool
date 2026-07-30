@@ -12,6 +12,11 @@
 - Installation receipts now bind the builder image, linker and glibc identity,
   vendor and Cargo configuration inventories, exact build environment and
   command, canonical path remaps, and complete build-context digest.
+- Added the PR7-only, root-held premerge seal transaction. It consumes one
+  short-lived exact-head request, binds the independently qualified diagnostic
+  receipt, runs only the fixed required-check command, and restores the exact
+  protected predecessor broker/config bytes on completion or recovery without
+  granting production installation authority.
 
 ## jeryu-tool-v5.1.0-split.1 — 2026-07-15
 

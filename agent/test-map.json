@@ -70,6 +70,16 @@
       "lane": "check",
       "purpose": "prove descriptor-retained physical install custody and unpredictable exclusive transaction leaves"
     },
+    "ops/bootstrap-jankurai-root-seal.sh": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "prove the exact PR candidate can serve one receipt-bound root seal and the protected predecessor is always restored"
+    },
+    "ops/test-bootstrap-jankurai-root-seal.sh": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "exercise digest, ref, head, receipt, expiry, reuse, command, replacement, interruption, and recovery hostiles"
+    },
     "ops/test-install-jankurai.sh": {
       "command": "just check",
       "lane": "check",

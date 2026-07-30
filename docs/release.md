@@ -28,6 +28,49 @@ Before the protected PR is approved or merged:
 - confirm the immutable source and prior content-addressed binary provide the
   release backup, and that rollout monitoring is active before host install
 
+### PR7 premerge root-seal bootstrap
+
+PR7 changes the auditor whose proof is itself required before merge. The sole
+cycle breaker is `ops/bootstrap-jankurai-root-seal.sh`; it does not install or
+promote the candidate. A distinct reviewer must first approve the complete
+source series and a fresh qualification must materialize the exact manifest
+binary plus its content-addressed `diagnostic-candidate` receipt. Host custody
+must be empty before the root operator starts.
+
+The operator supplies one ordinary, physical, single-link JSON request with
+schema `jeryu.jankurai-root-seal-bootstrap/v1`. Unknown fields are rejected.
+It binds:
+
+- a unique 64-hex attempt ID and the compiled PR7 topic ref
+- the clean checkout's exact published head and tree
+- the candidate's absolute physical path
+- the qualification receipt's absolute path and content-addressed SHA-256
+- integer creation and expiry epochs, with a maximum 900-second lifetime
+
+The root-only wrapper independently verifies the generated manifest pin, every
+qualification identity, the diagnostic/no-protected-main governance fields,
+the exact local and forge ref/head/tree, protected predecessor SHA-256, both
+broker configs, and protected SplitOps-main runner. It then copies the
+candidate, receipt, and byte-exact predecessor backups into a root-owned
+recovery journal, consumes the head's sole attempt, changes only the auditor
+binary and the two `jankurai_sha256` config fields, and launches the fixed
+`jeryu jeryu-tool <head> <canonical-root> jeryu-tool/required` command as the
+reserved host-CI parent identity. Callers cannot supply a command, broker,
+runner, ref family, install root, state root, predecessor, pin, or clock.
+
+Normal completion, command failure, `HUP`, `INT`, and `TERM` restore the exact
+predecessor binary and config bytes before return. The child receives a
+parent-death signal; if the supervisor is killed or the machine stops between
+atomic publications, the durable active marker makes the next invocation
+restore before it can consume another request. The attempt remains spent after
+any failure. The content-addressed result records the check exit code and
+`predecessor_restored=true`; it never turns a failed check green.
+
+This authority is intentionally narrower than installation: the candidate
+receipt remains diagnostic, the governed home path is untouched, production
+installation remains forbidden until protected fast-forward merge, and the
+ordinary release broker continues to reject caller receipt authority.
+
 After protected fast-forward merge, cut the immutable tag named by `VERSION` at
 the merged commit. Then run `ops/install-jankurai.sh` from a clean checkout of
 that exact protected main. The installer reads back immutable-main protection,

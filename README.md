@@ -31,6 +31,8 @@ registry.
 | `ops/build-jankurai-hermetic.sh` | Materializes and verifies the closed Cargo vendor inventory, then builds the immutable source as a non-root user in the digest-pinned read-only OCI builder with network disabled. |
 | `ops/install-jankurai.sh` | Verifies the immutable local-forge source, rejects test authority at `/home/ubuntu/.jeryu`, serializes the complete install/rollback/receipt transaction under a custody-checked lock, delegates to the hermetic builder, atomically installs the binary, preserves rollback content, and writes a content-addressed receipt. |
 | `ops/qualify-jankurai-candidate.sh` | Builds the exact premerge candidate into a temporary root and persists a content-addressed diagnostic receipt; it can never target the governed host root. |
+| `ops/bootstrap-jankurai-root-seal.sh` | Root-only, PR7-specific cycle breaker: consumes one short-lived closed request for an exact published head and diagnostic receipt, exposes the pinned candidate to one fixed required-check attempt, and restores the protected predecessor broker/config bytes on every exit or recovery. It is not an installer. |
+| `ops/test-bootstrap-jankurai-root-seal.sh` | Proves wrong digest/ref/head/tree/receipt, expiry, head/attempt reuse, caller command, replacement, signal, abrupt-death recovery, failure-result, and byte-exact restoration behavior. |
 | `ops/test-install-jankurai.sh` | Proves governed-root test-mode refusal, identity-bound idempotency, exclusive concurrent transaction custody, and safe refusal for receipt tamper, external sources/redirects, wrong digests, wrong versions, offline cache misses, interrupted installs, and rollback faults. |
 | `ops/test-render-tool-manifest.sh` | Proves unscoped rendering is check-only and write mode rejects missing custody, dirty roots, wrong origins, and heads not based on current protected main. |
 | `policy/default-audit-policy.toml` | The jeryu-managed fallback policy used to force-score repos that carry no policy of their own. |
@@ -64,10 +66,14 @@ manifest, so a half-done bump can never ship.
 
 The local protected PR gate may qualify an exact premerge candidate only in a
 temporary root with `test_mode=true` and a content-addressed receipt. That
-diagnostic candidate never grants installation or merge authority. Once an
-independently reviewed candidate is installed, the same gate automatically
-requires `/home/ubuntu/.jeryu/bin/jankurai` plus its production receipt (or can
-be forced fail-closed with `JERYU_TOOL_REQUIRE_GOVERNED_HOST=1`). The GitHub
+diagnostic candidate never grants installation or merge authority. The bounded
+PR7 bootstrap described in `docs/release.md` is the only exception to ordinary
+broker selection: it lends the exact candidate bytes to one root-seal attempt,
+under root-held transaction custody, and restores protected-main authority
+before returning. Once an independently reviewed candidate is installed after
+protected merge, the same gate automatically requires
+`/home/ubuntu/.jeryu/bin/jankurai` plus its production receipt (or can be
+forced fail-closed with `JERYU_TOOL_REQUIRE_GOVERNED_HOST=1`). The GitHub
 workflow is a static, non-authoritative mirror because it cannot reach the
 100%-local forge.
 
