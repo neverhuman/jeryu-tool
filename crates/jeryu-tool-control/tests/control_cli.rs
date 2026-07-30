@@ -22,8 +22,15 @@ fn registry_check_and_closed_arguments() {
     assert!(rejected.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(stderr.starts_with("registry-summary accepts only --check\n"));
-    assert!(stderr.contains("repair_hint:"));
+    assert!(stderr.contains("purpose: validate the canonical reusable-tool registry"));
+    assert!(stderr.contains("reason: registry or task input violated the closed schema"));
+    assert!(stderr.contains(
+        "common_fixes: fix the named field|remove the duplicate id|correct the status or task reference"
+    ));
     assert!(stderr.contains("docs_url: docs/tools-registry.md"));
+    assert!(stderr.contains(
+        "repair_hint: run ops/registry-summary.sh --check after correcting the named input"
+    ));
 }
 
 #[test]
