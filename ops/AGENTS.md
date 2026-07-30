@@ -14,16 +14,20 @@ unclaimed or dirty write root, add Python execution, weaken secret scanning,
 or treat the diagnostic GitHub mirror as a release path.
 
 The sole premerge cycle-breaker is `bootstrap-jankurai-root-seal.sh`. It may
-run only as root for the compiled PR7 topic, exact published head/tree,
-content-addressed diagnostic qualification receipt, 15-minute-or-shorter
-request, and one attempt for that head. It must retain the request, candidate,
-receipt, broker, configs, and runner by descriptor or root-held copy. Candidate
-probing and the final command may execute only from independently authenticated
-root-owned non-writable held bytes after final content and authority readback.
-It must launch only the fixed required-check command and restore the exact
-protected predecessor on success, failure, signal, or recovery. It grants no
-production installation authority and must not become a general candidate
-broker.
+run only from its authenticated root-owned installed path, after protected,
+tagged, and installed SplitOps authority exists, for the compiled PR7 topic,
+exact published head/tree, content-addressed diagnostic qualification receipt,
+15-minute-or-shorter request, and one attempt for that head. It must retain the
+installed entrypoint, pin, configs, SplitOps broker/token, request, candidate,
+receipt, and runner by descriptor or root-held copy. Its entrypoint and pin
+must match exact authenticated Git blobs before sourcing; its runner must come
+only from fixed protected SplitOps main equal to the installed immutable tag.
+Candidate probing and the final command may execute only from independently
+authenticated root-owned nonwritable held bytes after final content and
+authority readback. It must launch only the fixed required-check command and
+restore the exact protected predecessor on success, failure, signal, or
+recovery. It grants no production installation authority and must not become a
+general candidate broker.
 
 ## Proof lane
 

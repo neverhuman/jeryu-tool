@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bootstrap="${here}/bootstrap-jankurai-root-seal.sh"
+source_bootstrap="${here}/bootstrap-jankurai-root-seal.sh"
 tmp="$(mktemp -d /tmp/test-bootstrap-jankurai-root-seal.XXXXXX)"
 cleanup() {
   rm -rf -- "$tmp"
@@ -29,25 +29,23 @@ expect_failure() {
 }
 
 repo="$tmp/repo"
-remote="$tmp/origin.git"
+remote="$tmp/jeryu-tool.git"
+splitops_repo="$tmp/splitops-repo"
+splitops_remote="$tmp/jain-split-ops.git"
 install="$tmp/install"
 state="$tmp/state"
 evidence="$tmp/evidence"
-mkdir -p "$repo" "$install" "$evidence"
+mkdir -p "$repo" "$splitops_repo" "$install" "$evidence"
 git init -q --bare "$remote"
 git -C "$repo" init -q
 git -C "$repo" config user.name 'Bootstrap Test'
 git -C "$repo" config user.email bootstrap-test@example.invalid
-git -C "$repo" checkout -q -b codex/bootstrap-test
+git -C "$repo" checkout -q -b codex/jankurai-hermetic-builder-v1-20260729
 printf 'fixture manifest\n' >"$repo/tool-manifest.toml"
-git -C "$repo" add tool-manifest.toml
-git -C "$repo" commit -q -m 'test: bootstrap fixture'
-git -C "$repo" remote add origin "$remote"
-git -C "$repo" push -q -u origin HEAD
-head_sha="$(git -C "$repo" rev-parse HEAD)"
-tree_sha="$(git -C "$repo" rev-parse 'HEAD^{tree}')"
-manifest_sha="$(sha256sum "$repo/tool-manifest.toml" | awk '{print $1}')"
-control_ref=refs/heads/codex/bootstrap-test
+mkdir -p "$repo/ops" "$repo/generated"
+cp "$source_bootstrap" "$repo/ops/bootstrap-jankurai-root-seal.sh"
+chmod 0755 "$repo/ops/bootstrap-jankurai-root-seal.sh"
+control_ref=refs/heads/codex/jankurai-hermetic-builder-v1-20260729
 
 candidate="$evidence/jankurai"
 cat >"$candidate" <<'CANDIDATE'
@@ -67,35 +65,49 @@ predecessor_sha="$(sha256sum "$predecessor_source" | awk '{print $1}')"
 cp "$predecessor_source" "$install/jankurai"
 chmod 0555 "$install/jankurai"
 
-pin_env="$tmp/pin.env"
+pin_source="$repo/generated/jankurai-pin.env"
+pin_env="$install/jeryu-tool-root-seal-pin.env"
 cat >"$pin_env" <<EOF
-export JERYU_JANKURAI_SOURCE_REPO="fixture://jankurai"
-export JERYU_JANKURAI_VERSION="jankurai test-candidate"
-export JERYU_JANKURAI_SHA256="$candidate_sha"
-export JERYU_JANKURAI_SOURCE_REV="$(printf '1%.0s' {1..40})"
-export JERYU_JANKURAI_SOURCE_TAG="v-test"
-export JERYU_JANKURAI_SOURCE_TREE="$(printf '2%.0s' {1..40})"
-export JERYU_JANKURAI_SOURCE_ARCHIVE_SHA256="$(printf '3%.0s' {1..64})"
-export JERYU_JANKURAI_CARGO_LOCK_SHA256="$(printf '4%.0s' {1..64})"
-export JERYU_JANKURAI_RUSTC_VERSION="rustc test"
-export JERYU_JANKURAI_CARGO_VERSION="cargo test"
-export JERYU_JANKURAI_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
-export JERYU_JANKURAI_BUILD_MODE="test-closed-build"
-export JERYU_JANKURAI_PACKAGE_PATH="crates/jankurai"
-export JERYU_JANKURAI_BUILDER_IMAGE="fixture@sha256:$(printf '5%.0s' {1..64})"
-export JERYU_JANKURAI_BUILDER_IMAGE_ID="sha256:$(printf '5%.0s' {1..64})"
-export JERYU_JANKURAI_LINKER_VERSION="ld test"
-export JERYU_JANKURAI_GLIBC_VERSION="glibc test"
-export JERYU_JANKURAI_VENDOR_FILES_SHA256="$(printf '6%.0s' {1..64})"
-export JERYU_JANKURAI_VENDOR_FILE_COUNT="1"
-export JERYU_JANKURAI_CARGO_CONFIG_SHA256="$(printf '7%.0s' {1..64})"
-export JERYU_JANKURAI_BUILD_ENVIRONMENT="offline"
-export JERYU_JANKURAI_RUSTFLAGS="--test"
-export JERYU_JANKURAI_BUILD_COMMAND="cargo test"
-export JERYU_JANKURAI_BUILD_CONTEXT_SHA256="$(printf '8%.0s' {1..64})"
+JANKURAI_REPO="fixture://jankurai"
+JANKURAI_VERSION="jankurai test-candidate"
+JANKURAI_BINARY_SHA256="$candidate_sha"
+JANKURAI_REV="$(printf '1%.0s' {1..40})"
+JANKURAI_TAG="v-test"
+JANKURAI_SOURCE_TREE="$(printf '2%.0s' {1..40})"
+JANKURAI_SOURCE_ARCHIVE_SHA256="$(printf '3%.0s' {1..64})"
+JANKURAI_CARGO_LOCK_SHA256="$(printf '4%.0s' {1..64})"
+JANKURAI_RUSTC_VERSION="rustc test"
+JANKURAI_CARGO_VERSION="cargo test"
+JANKURAI_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
+JANKURAI_BUILD_MODE="test-closed-build"
+JANKURAI_PACKAGE_PATH="crates/jankurai"
+JANKURAI_BUILDER_IMAGE="fixture@sha256:$(printf '5%.0s' {1..64})"
+JANKURAI_BUILDER_IMAGE_ID="sha256:$(printf '5%.0s' {1..64})"
+JANKURAI_LINKER_VERSION="ld test"
+JANKURAI_GLIBC_VERSION="glibc test"
+JANKURAI_VENDOR_FILES_SHA256="$(printf '6%.0s' {1..64})"
+JANKURAI_VENDOR_FILE_COUNT="1"
+JANKURAI_CARGO_CONFIG_SHA256="$(printf '7%.0s' {1..64})"
+JANKURAI_BUILD_ENVIRONMENT="offline"
+JANKURAI_RUSTFLAGS="--test"
+JANKURAI_BUILD_COMMAND="cargo test"
+JANKURAI_BUILD_CONTEXT_SHA256="$(printf '8%.0s' {1..64})"
 EOF
+cp "$pin_env" "$pin_source"
+chmod 0400 "$pin_env"
 # shellcheck disable=SC1090
 source "$pin_env"
+
+git -C "$repo" add tool-manifest.toml ops/bootstrap-jankurai-root-seal.sh \
+  generated/jankurai-pin.env
+git -C "$repo" commit -q -m 'test: bootstrap fixture'
+git -C "$repo" remote add origin "$remote"
+git -C "$repo" push -q -u origin HEAD
+head_sha="$(git -C "$repo" rev-parse HEAD)"
+tree_sha="$(git -C "$repo" rev-parse 'HEAD^{tree}')"
+manifest_sha="$(sha256sum "$repo/tool-manifest.toml" | awk '{print $1}')"
+git -C "$repo" remote set-url origin \
+  http://127.0.0.1:8787/git/jeryu/jeryu-tool.git
 
 for kind in publisher sandbox; do
   jq -n --arg schema "test-$kind/v1" --arg digest "$predecessor_sha" \
@@ -109,7 +121,13 @@ sandbox="$install/host-ci-sandbox.config.json"
 publisher_original_sha="$(sha256sum "$publisher" | awk '{print $1}')"
 sandbox_original_sha="$(sha256sum "$sandbox" | awk '{print $1}')"
 
-runner="$tmp/runner"
+git init -q --bare "$splitops_remote"
+git -C "$splitops_repo" init -q
+git -C "$splitops_repo" config user.name 'SplitOps Bootstrap Test'
+git -C "$splitops_repo" config user.email splitops-test@example.invalid
+git -C "$splitops_repo" checkout -q -b main
+mkdir -p "$splitops_repo/ops/ci"
+runner="$splitops_repo/ops/ci/split-host-ci.sh"
 cat >"$runner" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -133,35 +151,164 @@ fi
 exit "${MOCK_EXIT_CODE:-0}"
 RUNNER
 chmod 0755 "$runner"
+git -C "$splitops_repo" add ops/ci/split-host-ci.sh
+git -C "$splitops_repo" commit -q -m 'test: protected splitops runner'
+splitops_commit="$(git -C "$splitops_repo" rev-parse HEAD)"
+splitops_tag=refs/tags/jain-split-ops-v10.0.0-split.15
+git -C "$splitops_repo" tag "${splitops_tag#refs/tags/}" "$splitops_commit"
+git -C "$splitops_repo" remote add origin "$splitops_remote"
+git -C "$splitops_repo" push -q origin main "${splitops_tag#refs/tags/}"
+
+bootstrap="$install/bootstrap-jankurai-root-seal"
+authority_config="$install/jeryu-tool-root-seal.config.json"
+splitops_config="$install/native-build-tools-installer.config.json"
+splitctl="$install/splitctl"
+token_file="$install/jeryu-merge-token"
+cp "$source_bootstrap" "$bootstrap"
+chmod 0500 "$bootstrap"
+printf 'test-token\n' >"$token_file"
+chmod 0600 "$token_file"
+cat >"$splitctl" <<'SPLITCTL'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == jeryu-local ]]
+command="$2"
+shift 2
+value() {
+  local flag="$1"
+  shift
+  while [[ "$#" -gt 1 ]]; do
+    if [[ "$1" == "$flag" ]]; then
+      printf '%s\n' "$2"
+      return 0
+    fi
+    shift
+  done
+  return 1
+}
+case "$command" in
+  protection-readback)
+    [[ "${MOCK_PROTECTION_MISMATCH:-0}" != 1 ]] || exit 41
+    printf '{"status":"pass"}\n'
+    ;;
+  ref-readback)
+    repo="$(value --repo "$@")"
+    reference="$(value --ref "$@")"
+    expected="$(value --expected-head "$@")"
+    if [[ "$repo" == jeryu/jeryu-tool ]]; then
+      actual="$(git --git-dir="$MOCK_JERYU_REMOTE_PATH" rev-parse "$reference")"
+    else
+      actual="$(git --git-dir="$MOCK_SPLITOPS_REMOTE_PATH" rev-parse "$reference")"
+    fi
+    [[ "$actual" == "$expected" ]]
+    printf '{"status":"pass"}\n'
+    ;;
+  git-materialize)
+    repo="$(value --repo "$@")"
+    remote="$(value --remote "$@")"
+    reference="$(value --ref "$@")"
+    destination="$(value --destination "$@")"
+    if [[ "$repo" == jeryu/jeryu-tool ]]; then
+      source_remote="$MOCK_JERYU_REMOTE_PATH"
+      expected="$(value --expected-head "$@")"
+      release_tag_ref=
+      release_tag_commit=
+    else
+      source_remote="$MOCK_SPLITOPS_REMOTE_PATH"
+      expected="$(git --git-dir="$source_remote" rev-parse "$reference")"
+      release_tag_ref="$(value --retain-exact-release-tag-ref "$@")"
+      release_tag_commit="$(value --retain-exact-release-tag-commit "$@")"
+      [[ "${MOCK_TAG_MISMATCH:-0}" != 1 ]]
+      [[ "$(git --git-dir="$source_remote" rev-parse "$release_tag_ref")" \
+        == "$release_tag_commit" ]]
+    fi
+    git clone -q --no-local --no-hardlinks "$source_remote" "$destination"
+    git -C "$destination" checkout -q --detach "$expected"
+    git -C "$destination" remote remove origin
+    jq -n -c \
+      --arg repository "$repo" --arg remote "$remote" \
+      --arg reference "$reference" --arg commit "$expected" \
+      --arg destination "$destination" --arg tag "$release_tag_ref" \
+      --arg tag_commit "$release_tag_commit" \
+      '{schema_version:"jain.jeryu-git-materialization/v1",
+        repository:$repository,remote:$remote,reference:$reference,
+        commit:$commit,destination:$destination,origin_retained:false,
+        lfs_hydrated:false,release_tag_ref:$tag,
+        release_tag_commit:$tag_commit,status:"pass"}'
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+SPLITCTL
+chmod 0500 "$splitctl"
+splitctl_sha="$(sha256sum "$splitctl" | awk '{print $1}')"
+jq -n -S \
+  --arg install "$install" \
+  --arg commit "$splitops_commit" \
+  --arg tag "$splitops_tag" \
+  --arg splitctl "$splitctl_sha" \
+  --arg token "$token_file" \
+  '{schema_version:"jain.native-build-tools-installer-config/v1",
+    install_dir:$install,
+    control_remote:"http://127.0.0.1:8787/git/veox/jain-split-ops.git",
+    control_ref:"refs/heads/main",control_commit:$commit,
+    control_tag_ref:$tag,splitctl_sha256:$splitctl,token_file:$token}' \
+  >"$splitops_config"
+chmod 0600 "$splitops_config"
+bootstrap_sha="$(sha256sum "$bootstrap" | awk '{print $1}')"
+pin_sha="$(sha256sum "$pin_env" | awk '{print $1}')"
+jq -n -S \
+  --arg bootstrap "$bootstrap_sha" \
+  --arg head "$head_sha" \
+  --arg tree "$tree_sha" \
+  --arg entrypoint "$bootstrap" \
+  --arg predecessor "$predecessor_sha" \
+  --arg pin "$pin_env" \
+  --arg pin_sha "$pin_sha" \
+  --arg splitctl "$splitctl" \
+  --arg splitops_config "$splitops_config" \
+  --arg state "$state" \
+  --arg token "$token_file" \
+  '{schema_version:"jeryu.jankurai-root-seal-authority/v1",
+    bootstrap_sha256:$bootstrap,control_commit:$head,
+    control_ref:"refs/heads/codex/jankurai-hermetic-builder-v1-20260729",
+    control_remote:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+    control_tree:$tree,entrypoint_path:$entrypoint,
+    expected_predecessor_sha256:$predecessor,pin_path:$pin,
+    pin_sha256:$pin_sha,splitctl_path:$splitctl,
+    splitops_config_path:$splitops_config,state_root:$state,
+    token_file:$token}' >"$authority_config"
+chmod 0600 "$authority_config"
 
 receipt_stage="$evidence/receipt-stage.json"
 jq -n -S \
-  --arg remote "$JERYU_JANKURAI_SOURCE_REPO" \
-  --arg commit "$JERYU_JANKURAI_SOURCE_REV" \
-  --arg tag "$JERYU_JANKURAI_SOURCE_TAG" \
-  --arg source_tree "$JERYU_JANKURAI_SOURCE_TREE" \
-  --arg archive "$JERYU_JANKURAI_SOURCE_ARCHIVE_SHA256" \
-  --arg lock "$JERYU_JANKURAI_CARGO_LOCK_SHA256" \
-  --arg rustc "$JERYU_JANKURAI_RUSTC_VERSION" \
-  --arg cargo "$JERYU_JANKURAI_CARGO_VERSION" \
-  --arg triple "$JERYU_JANKURAI_TARGET_TRIPLE" \
-  --arg mode "$JERYU_JANKURAI_BUILD_MODE" \
-  --arg package_path "$JERYU_JANKURAI_PACKAGE_PATH" \
-  --arg builder_image "$JERYU_JANKURAI_BUILDER_IMAGE" \
-  --arg builder_image_id "$JERYU_JANKURAI_BUILDER_IMAGE_ID" \
-  --arg linker "$JERYU_JANKURAI_LINKER_VERSION" \
-  --arg glibc "$JERYU_JANKURAI_GLIBC_VERSION" \
-  --arg vendor "$JERYU_JANKURAI_VENDOR_FILES_SHA256" \
-  --arg vendor_count "$JERYU_JANKURAI_VENDOR_FILE_COUNT" \
-  --arg cargo_config "$JERYU_JANKURAI_CARGO_CONFIG_SHA256" \
-  --arg environment "$JERYU_JANKURAI_BUILD_ENVIRONMENT" \
-  --arg rustflags "$JERYU_JANKURAI_RUSTFLAGS" \
-  --arg command "$JERYU_JANKURAI_BUILD_COMMAND" \
-  --arg context "$JERYU_JANKURAI_BUILD_CONTEXT_SHA256" \
+  --arg remote "$JANKURAI_REPO" \
+  --arg commit "$JANKURAI_REV" \
+  --arg tag "$JANKURAI_TAG" \
+  --arg source_tree "$JANKURAI_SOURCE_TREE" \
+  --arg archive "$JANKURAI_SOURCE_ARCHIVE_SHA256" \
+  --arg lock "$JANKURAI_CARGO_LOCK_SHA256" \
+  --arg rustc "$JANKURAI_RUSTC_VERSION" \
+  --arg cargo "$JANKURAI_CARGO_VERSION" \
+  --arg triple "$JANKURAI_TARGET_TRIPLE" \
+  --arg mode "$JANKURAI_BUILD_MODE" \
+  --arg package_path "$JANKURAI_PACKAGE_PATH" \
+  --arg builder_image "$JANKURAI_BUILDER_IMAGE" \
+  --arg builder_image_id "$JANKURAI_BUILDER_IMAGE_ID" \
+  --arg linker "$JANKURAI_LINKER_VERSION" \
+  --arg glibc "$JANKURAI_GLIBC_VERSION" \
+  --arg vendor "$JANKURAI_VENDOR_FILES_SHA256" \
+  --arg vendor_count "$JANKURAI_VENDOR_FILE_COUNT" \
+  --arg cargo_config "$JANKURAI_CARGO_CONFIG_SHA256" \
+  --arg environment "$JANKURAI_BUILD_ENVIRONMENT" \
+  --arg rustflags "$JANKURAI_RUSTFLAGS" \
+  --arg command "$JANKURAI_BUILD_COMMAND" \
+  --arg context "$JANKURAI_BUILD_CONTEXT_SHA256" \
   --arg digest "$candidate_sha" \
-  --arg version "$JERYU_JANKURAI_VERSION" \
+  --arg version "$JANKURAI_VERSION" \
   --arg path "$candidate" \
-  --arg manifest_repo "$remote" \
+  --arg manifest_repo "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git" \
   --arg manifest_commit "$head_sha" \
   --arg manifest_tree "$tree_sha" \
   --arg manifest_sha "$manifest_sha" \
@@ -219,15 +366,21 @@ make_request() {
 
 bootstrap_env=(
     JERYU_BOOTSTRAP_TEST_MODE=1 \
+    JERYU_BOOTSTRAP_AUTHORITY_ROOT="$tmp" \
+    JERYU_BOOTSTRAP_ENTRYPOINT="$bootstrap" \
+    JERYU_BOOTSTRAP_AUTHORITY_CONFIG="$authority_config" \
+    JERYU_BOOTSTRAP_SPLITOPS_CONFIG="$splitops_config" \
+    JERYU_BOOTSTRAP_SPLITCTL="$splitctl" \
+    JERYU_BOOTSTRAP_TOKEN_FILE="$token_file" \
     JERYU_BOOTSTRAP_REPO_ROOT="$repo" \
     JERYU_BOOTSTRAP_INSTALL_DIR="$install" \
     JERYU_BOOTSTRAP_STATE_ROOT="$state" \
-    JERYU_BOOTSTRAP_RUNNER="$runner" \
-    JERYU_BOOTSTRAP_REMOTE="$remote" \
+    JERYU_BOOTSTRAP_REMOTE="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git" \
     JERYU_BOOTSTRAP_PIN_ENV="$pin_env" \
-    JERYU_BOOTSTRAP_EXPECTED_PREDECESSOR_SHA256="$predecessor_sha" \
     JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE=1 \
     JERYU_BOOTSTRAP_NOW=1000 \
+    MOCK_JERYU_REMOTE_PATH="$remote" \
+    MOCK_SPLITOPS_REMOTE_PATH="$splitops_remote" \
     MOCK_HEAD="$head_sha" MOCK_CANDIDATE_SHA="$candidate_sha"
 )
 invoke() {
@@ -264,6 +417,74 @@ result_for_attempt() {
 request="$evidence/request-success.json"
 success_attempt="$(new_attempt)"
 make_request "$request" "$success_attempt"
+
+expect_failure 'direct checkout bootstrap execution' \
+  'production bootstrap must execute the installed entrypoint' \
+  env "${bootstrap_env[@]}" "$source_bootstrap" "$request"
+
+chmod 0777 "$install"
+expect_failure 'writable installed ancestry' \
+  'root-seal installed authority ancestry is not authority-owned and immutable' \
+  invoke "$request"
+chmod 0700 "$install"
+
+chmod 0600 "$pin_env"
+expect_failure 'writable installed pin helper' \
+  'unsafe held installed Jankurai pin' invoke "$request"
+chmod 0400 "$pin_env"
+
+config_substitution_hostile() {
+  local label="$1" target="$2" filter="$3" pattern="$4" hostile_request
+  hostile_request="$evidence/request-${label}.json"
+  make_request "$hostile_request" "$(new_attempt)"
+  cp "$target" "$tmp/${label}.backup"
+  jq "$filter" "$target" >"$tmp/${label}.hostile"
+  mv -fT "$tmp/${label}.hostile" "$target"
+  chmod 0600 "$target"
+  expect_failure "$label" "$pattern" invoke "$hostile_request"
+  mv -fT "$tmp/${label}.backup" "$target"
+  chmod 0600 "$target"
+  assert_restored
+}
+config_substitution_hostile jeryu-remote-substitution "$authority_config" \
+  '.control_remote="http://127.0.0.1:8787/git/veox/hostile.git"' \
+  'installed root-seal bootstrap authority config is invalid'
+config_substitution_hostile jeryu-ref-substitution "$authority_config" \
+  '.control_ref="refs/heads/codex/hostile"' \
+  'installed root-seal bootstrap authority config is invalid'
+config_substitution_hostile splitops-remote-substitution "$splitops_config" \
+  '.control_remote="http://127.0.0.1:8787/git/veox/hostile.git"' \
+  'installed SplitOps authority does not name the fixed forge'
+config_substitution_hostile splitops-tag-substitution "$splitops_config" \
+  '.control_tag_ref="refs/tags/jain-split-ops-v10.0.0-split.99"' \
+  'cannot authenticate protected SplitOps main and immutable release tag'
+
+protection_request="$evidence/request-protection-mismatch.json"
+make_request "$protection_request" "$(new_attempt)"
+expect_failure 'SplitOps protection mismatch' \
+  'protected SplitOps main policy is not exact' \
+  env "${bootstrap_env[@]}" MOCK_PROTECTION_MISMATCH=1 \
+    "$bootstrap" "$protection_request"
+assert_restored
+
+caller_splitops="$tmp/caller-splitops"
+git init -q "$caller_splitops"
+git -C "$caller_splitops" config user.name 'Hostile Caller'
+git -C "$caller_splitops" config user.email hostile@example.invalid
+git -C "$caller_splitops" checkout -q -b hostile-head
+printf 'hostile caller checkout\n' >"$caller_splitops/README"
+git -C "$caller_splitops" add README
+git -C "$caller_splitops" commit -q -m 'hostile caller head'
+git -C "$caller_splitops" remote add origin "$tmp/hostile-origin.git"
+poison_request="$evidence/request-caller-origin-head-poison.json"
+poison_attempt="$(new_attempt)"
+make_request "$poison_request" "$poison_attempt"
+env "${bootstrap_env[@]}" \
+  JERYU_BOOTSTRAP_TEST_CALLER_SPLITOPS_ROOT="$caller_splitops" \
+  "$bootstrap" "$poison_request" >"$tmp/caller-poison.log"
+assert_restored
+result_for_attempt "$poison_attempt" >/dev/null
+
 invoke "$request" >"$tmp/success.log"
 grep -Fq 'predecessor_restored=true' "$tmp/success.log"
 assert_restored
@@ -276,19 +497,16 @@ jq -e --arg predecessor "$predecessor_sha" --arg candidate "$candidate_sha" '
   and (.runner_sha256 | test("^[0-9a-f]{64}$"))
 ' "$result" >/dev/null
 
-one_head_state="$tmp/one-head-state"
 one_head_request="$evidence/request-one-head.json"
 make_request "$one_head_request" "$(new_attempt)"
-env "${bootstrap_env[@]/JERYU_BOOTSTRAP_STATE_ROOT=$state/JERYU_BOOTSTRAP_STATE_ROOT=$one_head_state}" \
-  JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE=0 \
+env "${bootstrap_env[@]}" JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE=0 \
   "$bootstrap" "$one_head_request" >"$tmp/one-head-success.log"
 assert_restored
 second_head_request="$evidence/request-one-head-reuse.json"
 make_request "$second_head_request" "$(new_attempt)"
 expect_failure 'second attempt for exact head' \
   'exact head already consumed its sole root-seal attempt' \
-  env "${bootstrap_env[@]/JERYU_BOOTSTRAP_STATE_ROOT=$state/JERYU_BOOTSTRAP_STATE_ROOT=$one_head_state}" \
-    JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE=0 \
+  env "${bootstrap_env[@]}" JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE=0 \
     "$bootstrap" "$second_head_request"
 
 expect_failure 'attempt reuse' 'attempt identifier was already consumed' \
@@ -313,15 +531,15 @@ expect_failure 'wrong candidate digest' \
 
 bad="$evidence/request-wrong-ref.json"
 make_request "$bad" "$(new_attempt)" '.ref="refs/heads/codex/wrong-ref"'
-expect_failure 'wrong ref' 'bootstrap request ref differs from the checked-out branch' \
+expect_failure 'wrong ref' 'bootstrap request differs from the installed reviewed authority' \
   invoke "$bad"
 bad="$evidence/request-wrong-head.json"
 make_request "$bad" "$(new_attempt)" '.head_sha=("a"*40)'
-expect_failure 'wrong head' 'bootstrap request head or tree differs from the checkout' \
+expect_failure 'wrong head' 'bootstrap request differs from the installed reviewed authority' \
   invoke "$bad"
 bad="$evidence/request-wrong-tree.json"
 make_request "$bad" "$(new_attempt)" '.tree_sha=("b"*40)'
-expect_failure 'wrong tree' 'bootstrap request head or tree differs from the checkout' \
+expect_failure 'wrong tree' 'bootstrap request differs from the installed reviewed authority' \
   invoke "$bad"
 bad="$evidence/request-expired.json"
 make_request "$bad" "$(new_attempt)" \
@@ -444,49 +662,43 @@ fi
 grep -Fq 'broker or config replacement detected' "$tmp/config-replacement.log"
 assert_restored
 
-replacement_request="$evidence/request-runner-replacement.json"
-make_request "$replacement_request" "$(new_attempt)"
-rm -f "$ready" "$release"
-cp "$runner" "$tmp/runner.backup"
-env "${bootstrap_env[@]}" \
-  JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
-  JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
-  "$bootstrap" "$replacement_request" >"$tmp/runner-replacement.log" 2>&1 &
-replacement_pid=$!
-while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
-printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/runner.hostile"
-chmod 0755 "$tmp/runner.hostile"
-mv -fT "$tmp/runner.hostile" "$runner"
-: >"$release"
-if wait "$replacement_pid"; then
-  fail 'runner replacement hostile unexpectedly succeeded'
-fi
-grep -Fq 'host-CI runner replacement detected' "$tmp/runner-replacement.log"
-mv -fT "$tmp/runner.backup" "$runner"
-chmod 0755 "$runner"
-assert_restored
+live_authority_hostile() {
+  local label="$1" target="$2" mutation="$3" mode request_path
+  request_path="$evidence/request-${label}.json"
+  make_request "$request_path" "$(new_attempt)"
+  ready="$tmp/${label}.ready"
+  release="$tmp/${label}.release"
+  mode="$(stat -Lc '%a' -- "$target")"
+  cp "$target" "$tmp/${label}.backup"
+  env "${bootstrap_env[@]}" \
+    JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
+    JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
+    "$bootstrap" "$request_path" >"$tmp/${label}.log" 2>&1 &
+  replacement_pid=$!
+  while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
+  if [[ "$mutation" == replace ]]; then
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/${label}.hostile"
+    chmod "$mode" "$tmp/${label}.hostile"
+    mv -fT "$tmp/${label}.hostile" "$target"
+  else
+    chmod u+w "$target"
+    printf '\n# same-inode installed authority drift\n' >>"$target"
+  fi
+  : >"$release"
+  if wait "$replacement_pid"; then
+    fail "$label hostile unexpectedly succeeded"
+  fi
+  grep -Eq 'unsafe held|installed root-seal authority identity or content drift detected' \
+    "$tmp/${label}.log"
+  mv -fT "$tmp/${label}.backup" "$target"
+  chmod "$mode" "$target"
+  assert_restored
+}
 
-replacement_request="$evidence/request-runner-content-drift.json"
-make_request "$replacement_request" "$(new_attempt)"
-rm -f "$ready" "$release"
-cp "$runner" "$tmp/runner.backup"
-env "${bootstrap_env[@]}" \
-  JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
-  JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
-  "$bootstrap" "$replacement_request" >"$tmp/runner-content-drift.log" 2>&1 &
-replacement_pid=$!
-while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
-printf '\n# same-inode runner content drift\n' >>"$runner"
-: >"$release"
-if wait "$replacement_pid"; then
-  fail 'runner same-inode content drift hostile unexpectedly succeeded'
-fi
-grep -Fq 'host-CI runner content drift detected' \
-  "$tmp/runner-content-drift.log"
-cp "$tmp/runner.backup" "$runner"
-rm -f "$tmp/runner.backup"
-chmod 0755 "$runner"
-assert_restored
+live_authority_hostile installed-splitctl-replacement "$splitctl" replace
+live_authority_hostile installed-splitctl-same-inode "$splitctl" drift
+live_authority_hostile installed-config-replacement "$authority_config" replace
+live_authority_hostile installed-entrypoint-same-inode "$bootstrap" drift
 
 interrupt_attempt="$(new_attempt)"
 interrupt_request="$evidence/request-interrupt.json"
@@ -530,7 +742,7 @@ grep -Fq 'production bootstrap is root-only' "$bootstrap" ||
   fail 'root-only production authority is absent'
 grep -Fq 'production override is forbidden' "$bootstrap" ||
   fail 'caller broker/command overrides are not rejected'
-grep -Fq 'root-seal runner is not checked out at protected SplitOps main' "$bootstrap" ||
+grep -Fq 'protected SplitOps main and immutable tag trees differ' "$bootstrap" ||
   fail 'protected runner authority validation is absent'
 grep -Fq 'protected_main' "${here}/install-jankurai.sh" ||
   fail 'production installer protected-main validation is absent'
@@ -538,4 +750,4 @@ grep -Fq 'release broker Jankurai rejects caller receipt authority' \
   "${here}/ci/lib.sh" ||
   fail 'ordinary release broker still accepts caller receipt authority'
 
-printf 'root-seal bootstrap tests passed: digest ref head tree receipt expiry reuse command replacement same-inode-drift held-execution interruption recovery restoration\n'
+printf 'root-seal bootstrap tests passed: installed-entrypoint immutable-blobs fixed-forge protection tag digest ref head tree receipt expiry reuse command replacement same-inode-drift held-execution interruption recovery restoration\n'

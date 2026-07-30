@@ -47,22 +47,42 @@ It binds:
 - the qualification receipt's absolute path and content-addressed SHA-256
 - integer creation and expiry epochs, with a maximum 900-second lifetime
 
-The root-only wrapper independently verifies the generated manifest pin, every
-qualification identity, the diagnostic/no-protected-main governance fields,
-the exact local and forge ref/head/tree, protected predecessor SHA-256, both
-broker configs, and protected SplitOps-main runner. Before any candidate
-probe, it copies the candidate into root-owned mode-0500 single-link custody,
-independently reauthenticates the copy, and runs the version probe only from
-those held bytes. It materializes protected SplitOps main with `git clone
---no-local --no-hardlinks` in a root-owned non-writable custody root, verifies
-the exact main commit, clean tree, strict object graph, and runner digest, and
-executes only that held runner. The automatically removed materialization
-preserves the runner's reviewed relative helper chain without executing any
-caller-writable checkout path.
+The bootstrap cannot run from this checkout in production. First land, tag,
+bind, and install the SplitOps correction that provides
+`/usr/local/libexec/jain/splitctl` and its closed
+`native-build-tools-installer.config.json`; there is no checkout fallback.
+Using that installed broker, root privately materializes the independently
+reviewed PR7 head from the fixed Jeryu forge, installs only its
+`ops/bootstrap-jankurai-root-seal.sh` as
+`/usr/local/libexec/jain/bootstrap-jankurai-root-seal` mode 0500 and its
+`generated/jankurai-pin.env` beside it mode 0400, then writes the closed
+root:root mode-0600 `jeryu-tool-root-seal.config.json`. That config binds the
+fixed remote/topic, reviewed commit/tree, both installed paths and digests,
+state root, predecessor digest, installed SplitOps config/broker, and installed
+token path. The temporary provisioning materialization is removed before use.
 
-Immediately before publication, the wrapper reauthenticates candidate,
-receipt, and runner pathname/inode/content identity plus both published
-authorities. Path replacement and same-inode content drift are terminal. The
+The installed entrypoint descriptor-retains itself, the pin, both authority
+configs, the SplitOps broker, and token. It authenticates the fixed published
+PR7 ref into private custody and compares its own and the pin's held bytes with
+the exact Git blobs before sourcing the pin. It then verifies every
+qualification identity, the diagnostic/no-protected-main governance fields,
+the exact local and forge ref/head/tree, protected predecessor SHA-256, and
+both broker configs. Before any candidate probe, it copies the candidate into
+root-owned mode-0500 single-link custody, independently reauthenticates the
+copy, and runs the version probe only from those held bytes.
+
+The held installed SplitOps broker verifies exact protected-main policy and
+materializes only fixed `veox/jain-split-ops` protected main with the exact
+immutable tag/commit named by its installed config. Main must still equal that
+tagged commit and tree. The bootstrap executes only the resulting root-owned
+non-writable runner and helper tree. Caller checkout paths, `origin`, `HEAD`,
+refs, remotes, helpers, configs, or self-consistent substitutes never select
+privileged bytes.
+
+Immediately before publication, the wrapper reauthenticates every installed
+authority descriptor, candidate, receipt, and held runner
+pathname/inode/content identity plus both published authorities. Path
+replacement and same-inode content drift are terminal. The
 recovery journal also retains the qualification receipt and byte-exact
 predecessor backups. The transaction consumes the head's sole attempt, changes
 only the auditor binary and the two `jankurai_sha256` config fields, and

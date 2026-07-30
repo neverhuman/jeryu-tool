@@ -8,9 +8,14 @@ umask 077
 readonly production_repo_root="/home/ubuntu/jain-split/jeryu-split/jeryu-tool"
 readonly production_install_dir="/usr/local/libexec/jain"
 readonly production_state_root="/var/lib/jain-host-ci/jeryu-tool-root-seal-bootstrap"
-readonly production_runner="/home/ubuntu/jain-split/jain-split-ops/ops/ci/split-host-ci.sh"
+readonly production_entrypoint="${production_install_dir}/bootstrap-jankurai-root-seal"
+readonly production_authority_config="${production_install_dir}/jeryu-tool-root-seal.config.json"
+readonly production_pin_env="${production_install_dir}/jeryu-tool-root-seal-pin.env"
+readonly production_splitops_config="${production_install_dir}/native-build-tools-installer.config.json"
+readonly production_splitctl="${production_install_dir}/splitctl"
+readonly production_token_file="${production_install_dir}/jeryu-merge-token"
 readonly production_remote="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
-readonly production_control_ref="refs/heads/codex/jankurai-hermetic-builder-v1-20260729"
+readonly production_splitops_remote="http://127.0.0.1:8787/git/veox/jain-split-ops.git"
 readonly production_predecessor_sha256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
 readonly maximum_lifetime_seconds=900
 
@@ -46,6 +51,48 @@ require_physical_dir() {
     || fail "$description must be an absolute physical directory"
 }
 
+require_immutable_ancestry() {
+  local path="$1" boundary="$2" description="$3" cursor
+  cursor="$(realpath -e -- "$path")" ||
+    fail "$description ancestry cannot be resolved"
+  boundary="$(realpath -e -- "$boundary")" ||
+    fail "$description boundary cannot be resolved"
+  while :; do
+    [[ ! -L "$cursor" \
+      && "$(stat -Lc '%u:%g' -- "$cursor")" == "$authority_uid:$authority_gid" \
+      && $((8#$(stat -Lc '%a' -- "$cursor") & 8#022)) == 0 ]] ||
+      fail "$description ancestry is not authority-owned and immutable"
+    [[ "$cursor" == "$boundary" ]] && break
+    [[ "$cursor" != / ]] ||
+      fail "$description ancestry escaped its authority boundary"
+    cursor="$(dirname -- "$cursor")"
+  done
+}
+
+assert_held_file() {
+  local path="$1" descriptor="$2" mode="$3" description="$4"
+  [[ "$path" == /* && -f "$path" && ! -L "$path" \
+    && "$(realpath -e -- "$path")" == "$path" \
+    && "$(stat -Lc '%u:%g:%a:%h' -- "$path")" \
+      == "$authority_uid:$authority_gid:$mode:1" \
+    && "$(stat -Lc '%d:%i' -- "$path")" \
+      == "$(stat -Lc '%d:%i' -- "$descriptor")" \
+    && "$(readlink -f -- "$descriptor")" == "$path" ]] ||
+    fail "unsafe held $description"
+}
+
+tagged_blob_sha256() {
+  local root="$1" commit="$2" relative="$3"
+  [[ "$relative" =~ ^[A-Za-z0-9._/-]+$ && "$relative" != /* \
+    && "$relative" != *..* && "$relative" != *//* ]] ||
+    fail 'unsafe Git blob path'
+  git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+    -c diff.external= -c filter.lfs.process= -c filter.lfs.smudge= \
+    -c filter.lfs.clean= -c filter.lfs.required=false \
+    -C "$root" cat-file blob "$commit:$relative" |
+    sha256sum | awk '{print $1}'
+}
+
 durable_sync() {
   [[ "$test_mode" == 1 ]] || sync -f "$1"
 }
@@ -57,9 +104,13 @@ if [[ "$test_mode" == 0 ]]; then
   [[ "$(id -u)" == 0 ]] || fail 'production bootstrap is root-only'
   for variable in \
     JERYU_BOOTSTRAP_REPO_ROOT JERYU_BOOTSTRAP_INSTALL_DIR \
-    JERYU_BOOTSTRAP_STATE_ROOT JERYU_BOOTSTRAP_RUNNER \
-    JERYU_BOOTSTRAP_REMOTE JERYU_BOOTSTRAP_PIN_ENV \
+    JERYU_BOOTSTRAP_STATE_ROOT JERYU_BOOTSTRAP_ENTRYPOINT \
+    JERYU_BOOTSTRAP_AUTHORITY_CONFIG JERYU_BOOTSTRAP_SPLITOPS_CONFIG \
+    JERYU_BOOTSTRAP_SPLITCTL JERYU_BOOTSTRAP_TOKEN_FILE \
+    JERYU_BOOTSTRAP_AUTHORITY_ROOT JERYU_BOOTSTRAP_REMOTE \
+    JERYU_BOOTSTRAP_PIN_ENV \
     JERYU_BOOTSTRAP_EXPECTED_PREDECESSOR_SHA256 JERYU_BOOTSTRAP_NOW \
+    GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM \
     JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE \
     JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE \
     JERYU_BOOTSTRAP_TEST_ALLOW_HEAD_REUSE; do
@@ -77,65 +128,274 @@ for tool in awk bash chmod chown cmp cp cut date env find flock git jq mkdir \
   need "$tool"
 done
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+authority_uid="$(id -u)"
+authority_gid="$(id -g)"
+authority_root="${JERYU_BOOTSTRAP_AUTHORITY_ROOT:-/}"
+entrypoint="${JERYU_BOOTSTRAP_ENTRYPOINT:-${production_entrypoint}}"
+authority_config="${JERYU_BOOTSTRAP_AUTHORITY_CONFIG:-${production_authority_config}}"
+splitops_config="${JERYU_BOOTSTRAP_SPLITOPS_CONFIG:-${production_splitops_config}}"
+splitctl="${JERYU_BOOTSTRAP_SPLITCTL:-${production_splitctl}}"
+token_file="${JERYU_BOOTSTRAP_TOKEN_FILE:-${production_token_file}}"
+pin_env="${JERYU_BOOTSTRAP_PIN_ENV:-${production_pin_env}}"
 repo_root="${JERYU_BOOTSTRAP_REPO_ROOT:-${production_repo_root}}"
 install_dir="${JERYU_BOOTSTRAP_INSTALL_DIR:-${production_install_dir}}"
 state_root="${JERYU_BOOTSTRAP_STATE_ROOT:-${production_state_root}}"
 runner_custody_root="${state_root}-runner-custody"
-runner="${JERYU_BOOTSTRAP_RUNNER:-${production_runner}}"
 manifest_remote="${JERYU_BOOTSTRAP_REMOTE:-${production_remote}}"
-pin_env="${JERYU_BOOTSTRAP_PIN_ENV:-${here}/ci/lib.sh}"
-expected_predecessor="${JERYU_BOOTSTRAP_EXPECTED_PREDECESSOR_SHA256:-${production_predecessor_sha256}}"
 now_epoch="${JERYU_BOOTSTRAP_NOW:-$(date +%s)}"
 
-[[ "$expected_predecessor" =~ ^[0-9a-f]{64}$ ]] ||
-  fail 'protected predecessor digest is malformed'
 [[ "$now_epoch" =~ ^[0-9]+$ ]] || fail 'current epoch is malformed'
 if [[ "$test_mode" == 0 ]]; then
-  [[ "$repo_root" == "$production_repo_root" \
+  [[ "$authority_uid:$authority_gid" == 0:0 \
+    && "$authority_root" == / \
+    && "$entrypoint" == "$production_entrypoint" \
+    && "$authority_config" == "$production_authority_config" \
+    && "$splitops_config" == "$production_splitops_config" \
+    && "$splitctl" == "$production_splitctl" \
+    && "$token_file" == "$production_token_file" \
+    && "$pin_env" == "$production_pin_env" \
+    && "$repo_root" == "$production_repo_root" \
     && "$install_dir" == "$production_install_dir" \
     && "$state_root" == "$production_state_root" \
-    && "$runner" == "$production_runner" \
-    && "$manifest_remote" == "$production_remote" \
-    && "$pin_env" == "${here}/ci/lib.sh" \
-    && "$expected_predecessor" == "$production_predecessor_sha256" ]] \
+    && "$manifest_remote" == "$production_remote" ]] \
     || fail 'production bootstrap authority differs from compiled constants'
-  ops_root="$(dirname "$(dirname "$(dirname "$runner")")")"
-  [[ -z "$(git -C "$ops_root" status --porcelain --untracked-files=all)" ]] ||
-    fail 'SplitOps checkout must be clean for a root-seal transaction'
-  ops_remote_main="$(git -C "$ops_root" ls-remote --heads origin refs/heads/main |
-    awk '$2 == "refs/heads/main" {print $1; count++} END {if (count != 1) exit 1}')" ||
-    fail 'unable to authenticate protected SplitOps main'
-  [[ "$(git -C "$ops_root" rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" ]] ||
-    fail 'root-seal runner is not checked out at protected SplitOps main'
-  ops_runner_relative="ops/ci/split-host-ci.sh"
 fi
 
+actual_entrypoint="$(realpath -e -- "${BASH_SOURCE[0]}")" ||
+  fail 'cannot resolve bootstrap entrypoint'
+[[ "$actual_entrypoint" == "$entrypoint" ]] ||
+  fail 'production bootstrap must execute the installed entrypoint'
 require_physical_dir "$repo_root" 'Jeryu Tool repository'
 require_physical_dir "$install_dir" 'host broker install directory'
-require_physical_file "$runner" 'host-CI runner'
+require_physical_file "$entrypoint" 'root-seal bootstrap entrypoint'
+require_physical_file "$authority_config" 'root-seal bootstrap authority config'
+require_physical_file "$splitops_config" 'installed SplitOps authority config'
+require_physical_file "$splitctl" 'installed SplitOps broker'
+require_physical_file "$token_file" 'installed forge token'
 require_physical_file "$pin_env" 'Jankurai pin authority'
-runner_identity="$(file_identity "$runner")"
-exec {runner_fd}<"$runner"
-runner_descriptor="/proc/${BASHPID}/fd/${runner_fd}"
-[[ "$(file_identity "$runner_descriptor")" == "$runner_identity" ]] ||
-  fail 'host-CI runner descriptor identity changed'
-runner_sha256="$(sha256_file "$runner_descriptor")"
+require_immutable_ancestry "$install_dir" "$authority_root" \
+  'root-seal installed authority'
+
+exec {entrypoint_fd}<"$entrypoint"
+exec {authority_fd}<"$authority_config"
+exec {splitops_config_fd}<"$splitops_config"
+exec {splitctl_fd}<"$splitctl"
+exec {token_fd}<"$token_file"
+exec {pin_fd}<"$pin_env"
+entrypoint_descriptor="/proc/${BASHPID}/fd/${entrypoint_fd}"
+authority_descriptor="/proc/${BASHPID}/fd/${authority_fd}"
+splitops_config_descriptor="/proc/${BASHPID}/fd/${splitops_config_fd}"
+splitctl_descriptor="/proc/${BASHPID}/fd/${splitctl_fd}"
+token_descriptor="/proc/${BASHPID}/fd/${token_fd}"
+pin_descriptor="/proc/${BASHPID}/fd/${pin_fd}"
+assert_held_file "$entrypoint" "$entrypoint_descriptor" 500 \
+  'root-seal bootstrap entrypoint'
+assert_held_file "$authority_config" "$authority_descriptor" 600 \
+  'root-seal bootstrap authority config'
+assert_held_file "$splitops_config" "$splitops_config_descriptor" 600 \
+  'installed SplitOps authority config'
+assert_held_file "$splitctl" "$splitctl_descriptor" 500 \
+  'installed SplitOps broker'
+assert_held_file "$token_file" "$token_descriptor" 600 \
+  'installed forge token'
+assert_held_file "$pin_env" "$pin_descriptor" 400 \
+  'installed Jankurai pin'
+
+jq -e '
+  select(type == "object")
+  | select(keys == [
+      "bootstrap_sha256", "control_commit", "control_ref", "control_remote",
+      "control_tree", "entrypoint_path", "expected_predecessor_sha256",
+      "pin_path", "pin_sha256", "schema_version", "splitctl_path",
+      "splitops_config_path", "state_root", "token_file"
+    ])
+  | select(.schema_version == "jeryu.jankurai-root-seal-authority/v1")
+  | select(.bootstrap_sha256 | test("^[0-9a-f]{64}$"))
+  | select(.control_commit | test("^[0-9a-f]{40}$"))
+  | select(.control_ref
+      == "refs/heads/codex/jankurai-hermetic-builder-v1-20260729")
+  | select(.control_remote
+      == "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git")
+  | select(.control_tree | test("^[0-9a-f]{40}$"))
+  | select(.entrypoint_path | type == "string" and startswith("/"))
+  | select(.expected_predecessor_sha256 | test("^[0-9a-f]{64}$"))
+  | select(.pin_path | type == "string" and startswith("/"))
+  | select(.pin_sha256 | test("^[0-9a-f]{64}$"))
+  | select(.splitctl_path | type == "string" and startswith("/"))
+  | select(.splitops_config_path | type == "string" and startswith("/"))
+  | select(.state_root | type == "string" and startswith("/"))
+  | select(.token_file | type == "string" and startswith("/"))
+' "$authority_descriptor" >/dev/null ||
+  fail 'installed root-seal bootstrap authority config is invalid'
+
+control_ref="$(jq -er '.control_ref' "$authority_descriptor")"
+authority_head="$(jq -er '.control_commit' "$authority_descriptor")"
+authority_tree="$(jq -er '.control_tree' "$authority_descriptor")"
+expected_predecessor="$(jq -er '.expected_predecessor_sha256' \
+  "$authority_descriptor")"
+[[ "$(jq -er '.entrypoint_path' "$authority_descriptor")" == "$entrypoint" \
+  && "$(jq -er '.pin_path' "$authority_descriptor")" == "$pin_env" \
+  && "$(jq -er '.splitops_config_path' "$authority_descriptor")" \
+    == "$splitops_config" \
+  && "$(jq -er '.splitctl_path' "$authority_descriptor")" == "$splitctl" \
+  && "$(jq -er '.state_root' "$authority_descriptor")" == "$state_root" \
+  && "$(jq -er '.token_file' "$authority_descriptor")" == "$token_file" \
+  && "$(jq -er '.control_remote' "$authority_descriptor")" == "$manifest_remote" \
+  && "$(sha256_file "$entrypoint_descriptor")" \
+    == "$(jq -er '.bootstrap_sha256' "$authority_descriptor")" \
+  && "$(sha256_file "$pin_descriptor")" \
+    == "$(jq -er '.pin_sha256' "$authority_descriptor")" ]] ||
+  fail 'installed root-seal bootstrap authority binding is inconsistent'
+[[ "$expected_predecessor" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'protected predecessor digest is malformed'
 if [[ "$test_mode" == 0 ]]; then
-  expected_runner_sha256="$(
-    git -C "$ops_root" show "$ops_remote_main:$ops_runner_relative" |
-      sha256sum | awk '{print $1}'
-  )" || fail 'unable to read the protected SplitOps runner object'
-  [[ "$runner_sha256" == "$expected_runner_sha256" ]] ||
-    fail 'public host-CI runner differs from protected SplitOps main'
-else
-  expected_runner_sha256="$runner_sha256"
+  [[ "$expected_predecessor" == "$production_predecessor_sha256" ]] ||
+    fail 'production predecessor differs from the reviewed protected binary'
 fi
 
+jq -e '
+  select(type == "object")
+  | select(keys == [
+      "control_commit", "control_ref", "control_remote", "control_tag_ref",
+      "install_dir", "schema_version", "splitctl_sha256", "token_file"
+    ])
+  | select(.schema_version == "jain.native-build-tools-installer-config/v1")
+  | select(.control_ref == "refs/heads/main")
+  | select(.control_commit | test("^[0-9a-f]{40}$"))
+  | select(.control_tag_ref
+      | test("^refs/tags/jain-split-ops-v[0-9]+\\.[0-9]+\\.[0-9]+-split\\.[0-9]+$"))
+  | select(.splitctl_sha256 | test("^[0-9a-f]{64}$"))
+' "$splitops_config_descriptor" >/dev/null ||
+  fail 'installed SplitOps authority config is invalid'
+ops_remote="$(jq -er '.control_remote' "$splitops_config_descriptor")"
+ops_ref="$(jq -er '.control_ref' "$splitops_config_descriptor")"
+ops_commit="$(jq -er '.control_commit' "$splitops_config_descriptor")"
+ops_tag_ref="$(jq -er '.control_tag_ref' "$splitops_config_descriptor")"
+[[ "$(jq -er '.install_dir' "$splitops_config_descriptor")" == "$install_dir" \
+  && "$(jq -er '.token_file' "$splitops_config_descriptor")" == "$token_file" \
+  && "$(sha256_file "$splitctl_descriptor")" \
+    == "$(jq -er '.splitctl_sha256' "$splitops_config_descriptor")" ]] ||
+  fail 'installed SplitOps broker/config binding is inconsistent'
+[[ "$ops_remote" == "$production_splitops_remote" ]] ||
+  fail 'installed SplitOps authority does not name the fixed forge'
+entrypoint_sha256="$(sha256_file "$entrypoint_descriptor")"
+authority_config_sha256="$(sha256_file "$authority_descriptor")"
+splitops_config_sha256="$(sha256_file "$splitops_config_descriptor")"
+splitctl_sha256="$(sha256_file "$splitctl_descriptor")"
+token_sha256="$(sha256_file "$token_descriptor")"
+pin_sha256="$(sha256_file "$pin_descriptor")"
+
+assert_installed_authority_held() {
+  assert_held_file "$entrypoint" "$entrypoint_descriptor" 500 \
+    'root-seal bootstrap entrypoint'
+  assert_held_file "$authority_config" "$authority_descriptor" 600 \
+    'root-seal bootstrap authority config'
+  assert_held_file "$splitops_config" "$splitops_config_descriptor" 600 \
+    'installed SplitOps authority config'
+  assert_held_file "$splitctl" "$splitctl_descriptor" 500 \
+    'installed SplitOps broker'
+  assert_held_file "$token_file" "$token_descriptor" 600 \
+    'installed forge token'
+  assert_held_file "$pin_env" "$pin_descriptor" 400 \
+    'installed Jankurai pin'
+  [[ "$(sha256_file "$entrypoint_descriptor")" == "$entrypoint_sha256" \
+    && "$(sha256_file "$entrypoint")" == "$entrypoint_sha256" \
+    && "$(sha256_file "$authority_descriptor")" == "$authority_config_sha256" \
+    && "$(sha256_file "$authority_config")" == "$authority_config_sha256" \
+    && "$(sha256_file "$splitops_config_descriptor")" == "$splitops_config_sha256" \
+    && "$(sha256_file "$splitops_config")" == "$splitops_config_sha256" \
+    && "$(sha256_file "$splitctl_descriptor")" == "$splitctl_sha256" \
+    && "$(sha256_file "$splitctl")" == "$splitctl_sha256" \
+    && "$(sha256_file "$token_descriptor")" == "$token_sha256" \
+    && "$(sha256_file "$token_file")" == "$token_sha256" \
+    && "$(sha256_file "$pin_descriptor")" == "$pin_sha256" \
+    && "$(sha256_file "$pin_env")" == "$pin_sha256" ]] ||
+    fail 'installed root-seal authority identity or content drift detected'
+}
+
+mkdir -p -- "$state_root"
+chmod 0700 -- "$state_root"
+require_physical_dir "$state_root" 'bootstrap state root'
+[[ "$(stat -Lc '%u:%g:%a' -- "$state_root")" \
+  == "$authority_uid:$authority_gid:700" ]] ||
+  fail 'bootstrap state root custody is unsafe'
+authority_scratch="$(mktemp -d "${state_root}.authority.XXXXXX")"
+chmod 0700 "$authority_scratch"
+cleanup_authority_scratch() {
+  if [[ -n "${authority_scratch:-}" \
+    && "$authority_scratch" == "${state_root}.authority."?????? \
+    && -d "$authority_scratch" && ! -L "$authority_scratch" \
+    && "$(stat -Lc '%u:%g' -- "$authority_scratch")" \
+      == "$authority_uid:$authority_gid" ]]; then
+    chmod -R u+w "$authority_scratch" 2>/dev/null || true
+    rm -rf --one-file-system -- "$authority_scratch"
+  fi
+}
+trap cleanup_authority_scratch EXIT
+source_root="$authority_scratch/jeryu-tool"
+source_materialization="$authority_scratch/jeryu-tool.json"
+"$splitctl_descriptor" jeryu-local git-materialize \
+  --repo jeryu/jeryu-tool \
+  --remote "$manifest_remote" \
+  --ref "$control_ref" \
+  --expected-head "$authority_head" \
+  --destination "$source_root" \
+  --token-file "$token_file" >"$source_materialization" ||
+  fail 'cannot authenticate the installed Jeryu Tool entrypoint source'
+jq -e \
+  --arg remote "$manifest_remote" \
+  --arg reference "$control_ref" \
+  --arg commit "$authority_head" \
+  --arg destination "$source_root" '
+    select(.schema_version == "jain.jeryu-git-materialization/v1")
+    | select(.repository == "jeryu/jeryu-tool")
+    | select(.remote == $remote and .reference == $reference)
+    | select(.commit == $commit and .destination == $destination)
+    | select(.origin_retained == false and .lfs_hydrated == false)
+    | select(.status == "pass")
+  ' "$source_materialization" >/dev/null ||
+  fail 'authenticated Jeryu Tool materialization report is invalid'
+[[ "$(git -C "$source_root" rev-parse --verify 'HEAD^{commit}')" \
+    == "$authority_head" \
+  && "$(git -C "$source_root" rev-parse --verify 'HEAD^{tree}')" \
+    == "$authority_tree" \
+  && "$(tagged_blob_sha256 "$source_root" "$authority_head" \
+      ops/bootstrap-jankurai-root-seal.sh)" \
+    == "$(sha256_file "$entrypoint_descriptor")" \
+  && "$(tagged_blob_sha256 "$source_root" "$authority_head" \
+      generated/jankurai-pin.env)" == "$(sha256_file "$pin_descriptor")" ]] ||
+  fail 'installed entrypoint or pin differs from the authenticated Git blobs'
+
+# The pin is sourced only from a retained installed descriptor after both its
+# installed config digest and its exact published Git blob have been proven.
 # shellcheck disable=SC1090
-source "$pin_env"
-expected_candidate="${JERYU_JANKURAI_SHA256:?candidate digest missing from pin authority}"
-expected_version="${JERYU_JANKURAI_VERSION:?candidate version missing from pin authority}"
+source "$pin_descriptor"
+JERYU_JANKURAI_SOURCE_REPO="${JANKURAI_REPO:?source repo missing from pin}"
+JERYU_JANKURAI_VERSION="${JANKURAI_VERSION:?version missing from pin}"
+JERYU_JANKURAI_SHA256="${JANKURAI_BINARY_SHA256:?binary digest missing from pin}"
+JERYU_JANKURAI_SOURCE_REV="${JANKURAI_REV:?source rev missing from pin}"
+JERYU_JANKURAI_SOURCE_TAG="${JANKURAI_TAG:?source tag missing from pin}"
+JERYU_JANKURAI_SOURCE_TREE="${JANKURAI_SOURCE_TREE:?source tree missing from pin}"
+JERYU_JANKURAI_SOURCE_ARCHIVE_SHA256="${JANKURAI_SOURCE_ARCHIVE_SHA256:?archive digest missing from pin}"
+JERYU_JANKURAI_CARGO_LOCK_SHA256="${JANKURAI_CARGO_LOCK_SHA256:?lock digest missing from pin}"
+JERYU_JANKURAI_RUSTC_VERSION="${JANKURAI_RUSTC_VERSION:?rustc missing from pin}"
+JERYU_JANKURAI_CARGO_VERSION="${JANKURAI_CARGO_VERSION:?cargo missing from pin}"
+JERYU_JANKURAI_TARGET_TRIPLE="${JANKURAI_TARGET_TRIPLE:?target missing from pin}"
+JERYU_JANKURAI_BUILD_MODE="${JANKURAI_BUILD_MODE:?build mode missing from pin}"
+JERYU_JANKURAI_PACKAGE_PATH="${JANKURAI_PACKAGE_PATH:?package path missing from pin}"
+JERYU_JANKURAI_BUILDER_IMAGE="${JANKURAI_BUILDER_IMAGE:?builder image missing from pin}"
+JERYU_JANKURAI_BUILDER_IMAGE_ID="${JANKURAI_BUILDER_IMAGE_ID:?builder image id missing from pin}"
+JERYU_JANKURAI_LINKER_VERSION="${JANKURAI_LINKER_VERSION:?linker missing from pin}"
+JERYU_JANKURAI_GLIBC_VERSION="${JANKURAI_GLIBC_VERSION:?glibc missing from pin}"
+JERYU_JANKURAI_VENDOR_FILES_SHA256="${JANKURAI_VENDOR_FILES_SHA256:?vendor digest missing from pin}"
+JERYU_JANKURAI_VENDOR_FILE_COUNT="${JANKURAI_VENDOR_FILE_COUNT:?vendor count missing from pin}"
+JERYU_JANKURAI_CARGO_CONFIG_SHA256="${JANKURAI_CARGO_CONFIG_SHA256:?cargo config missing from pin}"
+JERYU_JANKURAI_BUILD_ENVIRONMENT="${JANKURAI_BUILD_ENVIRONMENT:?build environment missing from pin}"
+JERYU_JANKURAI_RUSTFLAGS="${JANKURAI_RUSTFLAGS:?rustflags missing from pin}"
+JERYU_JANKURAI_BUILD_COMMAND="${JANKURAI_BUILD_COMMAND:?build command missing from pin}"
+JERYU_JANKURAI_BUILD_CONTEXT_SHA256="${JANKURAI_BUILD_CONTEXT_SHA256:?build context missing from pin}"
+expected_candidate="$JERYU_JANKURAI_SHA256"
+expected_version="$JERYU_JANKURAI_VERSION"
 [[ "$expected_candidate" =~ ^[0-9a-f]{64}$ ]] ||
   fail 'candidate digest from pin authority is malformed'
 if [[ "$test_mode" == 0 ]]; then
@@ -177,7 +437,7 @@ jq -e '
   fail 'bootstrap request schema or closed fields are invalid'
 
 attempt_id="$(jq -er '.attempt_id' "$request_descriptor")"
-control_ref="$(jq -er '.ref' "$request_descriptor")"
+request_ref="$(jq -er '.ref' "$request_descriptor")"
 head_sha="$(jq -er '.head_sha' "$request_descriptor")"
 tree_sha="$(jq -er '.tree_sha' "$request_descriptor")"
 candidate_path="$(jq -er '.candidate_path' "$request_descriptor")"
@@ -185,9 +445,10 @@ candidate_receipt_path="$(jq -er '.candidate_receipt_path' "$request_descriptor"
 candidate_receipt_sha256="$(jq -er '.candidate_receipt_sha256' "$request_descriptor")"
 created_at_epoch="$(jq -er '.created_at_epoch' "$request_descriptor")"
 expires_at_epoch="$(jq -er '.expires_at_epoch' "$request_descriptor")"
-if [[ "$test_mode" == 0 && "$control_ref" != "$production_control_ref" ]]; then
-  fail 'production bootstrap request is not the reviewed PR7 topic ref'
-fi
+[[ "$request_ref" == "$control_ref" \
+  && "$head_sha" == "$authority_head" \
+  && "$tree_sha" == "$authority_tree" ]] ||
+  fail 'bootstrap request differs from the installed reviewed authority'
 
 (( expires_at_epoch >= created_at_epoch \
   && expires_at_epoch - created_at_epoch <= maximum_lifetime_seconds \
@@ -220,7 +481,9 @@ receipt_descriptor="/proc/${BASHPID}/fd/${receipt_fd}"
 [[ "$(sha256_file "$receipt_descriptor")" == "$candidate_receipt_sha256" ]] ||
   fail 'candidate receipt content address mismatch'
 
-manifest_sha256="$(sha256_file "$repo_root/tool-manifest.toml")"
+manifest_sha256="$(sha256_file "$source_root/tool-manifest.toml")"
+[[ "$(sha256_file "$repo_root/tool-manifest.toml")" == "$manifest_sha256" ]] ||
+  fail 'caller checkout manifest differs from authenticated source'
 current_head="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"
 current_tree="$(git -C "$repo_root" rev-parse --verify 'HEAD^{tree}')"
 current_branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD)" ||
@@ -229,15 +492,17 @@ current_branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD)" ||
   fail 'Jeryu Tool origin differs from bootstrap authority'
 [[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ]] ||
   fail 'Jeryu Tool checkout must be clean'
-[[ "$control_ref" == "refs/heads/$current_branch" ]] ||
+[[ "$request_ref" == "refs/heads/$current_branch" ]] ||
   fail 'bootstrap request ref differs from the checked-out branch'
 [[ "$head_sha" == "$current_head" && "$tree_sha" == "$current_tree" ]] ||
   fail 'bootstrap request head or tree differs from the checkout'
-remote_head="$(git -C "$repo_root" ls-remote --heads "$manifest_remote" "$control_ref" |
-  awk -v ref="$control_ref" '$2 == ref {print $1; count++} END {if (count != 1) exit 1}')" ||
-  fail 'unable to authenticate one exact published bootstrap ref'
-[[ "$remote_head" == "$head_sha" ]] ||
-  fail 'published bootstrap ref differs from the request head'
+"$splitctl_descriptor" jeryu-local ref-readback \
+  --repo jeryu/jeryu-tool \
+  --remote "$manifest_remote" \
+  --ref "$control_ref" \
+  --expected-head "$head_sha" \
+  --token-file "$token_file" >/dev/null ||
+  fail 'published bootstrap ref differs from the installed authority'
 
 jq -e \
   --arg remote "${JERYU_JANKURAI_SOURCE_REPO}" \
@@ -435,9 +700,12 @@ restore_attempt() {
     [[ "$(dirname "$(realpath -e -- "$runner_attempt_dir")")" \
       == "$runner_custody_root" ]] ||
       fail 'root-held runner materialization escaped its custody root'
+    chmod 0700 "$runner_custody_root"
+    chmod -R u+w "$runner_attempt_dir"
     rm -rf --one-file-system -- "$runner_attempt_dir"
     [[ ! -e "$runner_attempt_dir" && ! -L "$runner_attempt_dir" ]] ||
       fail 'root-held runner materialization cleanup failed'
+    chmod 0711 "$runner_custody_root"
   fi
   rm -f -- "$active_file"
   durable_sync "$state_root"
@@ -564,6 +832,7 @@ on_exit() {
     restore_attempt "$attempt_id" 'exit-trap-restoration' || exit_rc=1
     transaction_active=0
   fi
+  cleanup_authority_scratch || exit_rc=1
   exit "$exit_rc"
 }
 on_signal() {
@@ -586,48 +855,63 @@ trap 'on_signal TERM' TERM
 runner_attempt_dir="$runner_custody_root/$attempt_id"
 mkdir -m 0700 -- "$runner_attempt_dir" 2>/dev/null ||
   fail 'runner custody identifier was already consumed'
-if [[ "$test_mode" == 1 ]]; then
-  held_runner="$runner_attempt_dir/split-host-ci.sh"
-  cp -- "$runner_descriptor" "$held_runner"
-  chmod 0500 "$held_runner"
-else
-  held_ops_root="$runner_attempt_dir/control-plane"
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
-    git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-      -c protocol.file.allow=always clone --quiet --no-local --no-hardlinks \
-      "$ops_root" "$held_ops_root" ||
-    fail 'unable to materialize protected SplitOps runner custody'
-  git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
-    -c core.hooksPath=/dev/null -C "$held_ops_root" \
-    checkout --quiet --detach "$ops_remote_main" ||
-    fail 'unable to select protected SplitOps main in runner custody'
-  [[ "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
-      -c core.hooksPath=/dev/null -C "$held_ops_root" \
-      rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" \
-    && "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
-      -c core.hooksPath=/dev/null -C "$held_ops_root" \
-      rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
-      == "$ops_remote_main" \
-    && -z "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
-      -c core.hooksPath=/dev/null -C "$held_ops_root" \
-      status --porcelain=v1 --untracked-files=all)" ]] ||
-    fail 'root-held SplitOps materialization differs from protected main'
-  git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
-    -c core.hooksPath=/dev/null -C "$held_ops_root" fsck --strict \
-    --no-progress >/dev/null ||
-    fail 'root-held SplitOps materialization failed strict object verification'
-  held_runner="$held_ops_root/$ops_runner_relative"
+assert_installed_authority_held
+"$splitctl_descriptor" jeryu-local protection-readback \
+  --repo veox/jain-split-ops \
+  --required-check jain-split-ops/required \
+  --token-file "$token_file" >/dev/null ||
+  fail 'protected SplitOps main policy is not exact'
+held_ops_root="$runner_attempt_dir/control-plane"
+ops_materialization="$runner_attempt_dir/materialization.json"
+"$splitctl_descriptor" jeryu-local git-materialize \
+  --repo veox/jain-split-ops \
+  --remote "$ops_remote" \
+  --ref "$ops_ref" \
+  --resolve-ref-head \
+  --destination "$held_ops_root" \
+  --token-file "$token_file" \
+  --retain-exact-release-tag-ref "$ops_tag_ref" \
+  --retain-exact-release-tag-commit "$ops_commit" \
+  >"$ops_materialization" ||
+  fail 'cannot authenticate protected SplitOps main and immutable release tag'
+jq -e \
+  --arg remote "$ops_remote" \
+  --arg reference "$ops_ref" \
+  --arg commit "$ops_commit" \
+  --arg destination "$held_ops_root" \
+  --arg tag "$ops_tag_ref" '
+    select(.schema_version == "jain.jeryu-git-materialization/v1")
+    | select(.repository == "veox/jain-split-ops")
+    | select(.remote == $remote and .reference == $reference)
+    | select(.commit == $commit and .destination == $destination)
+    | select(.release_tag_ref == $tag and .release_tag_commit == $commit)
+    | select(.origin_retained == false and .lfs_hydrated == false)
+    | select(.status == "pass")
+  ' "$ops_materialization" >/dev/null ||
+  fail 'protected SplitOps materialization is not the exact installed release'
+[[ "$(git -C "$held_ops_root" rev-parse --verify 'HEAD^{commit}')" \
+    == "$ops_commit" \
+  && "$(git -C "$held_ops_root" rev-parse --verify 'HEAD^{tree}')" \
+    == "$(git -C "$held_ops_root" rev-parse --verify \
+      "${ops_tag_ref}^{tree}")" ]] ||
+  fail 'protected SplitOps main and immutable tag trees differ'
+ops_runner_relative="ops/ci/split-host-ci.sh"
+held_runner="$held_ops_root/$ops_runner_relative"
+expected_runner_sha256="$(tagged_blob_sha256 "$held_ops_root" \
+  "$ops_commit" "$ops_runner_relative")"
+if [[ "$test_mode" == 0 ]]; then
   chown -R 0:0 -- "$runner_attempt_dir"
-  find "$runner_attempt_dir" -type d -exec chmod 0555 {} +
-  find "$runner_attempt_dir" -type f -exec chmod a-w {} +
 fi
+find "$runner_attempt_dir" -type d -exec chmod 0555 {} +
+find "$runner_attempt_dir" -type f -exec chmod 0444 {} +
+chmod 0555 "$held_runner"
 require_physical_file "$held_runner" 'root-held host-CI runner'
 if [[ "$test_mode" == 0 ]]; then
   [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" == '0:0:555:1' ]] ||
     fail 'root-held production runner custody is unsafe'
 else
   [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" \
-      == "$(id -u):$(id -g):500:1" ]] ||
+      == "$authority_uid:$authority_gid:555:1" ]] ||
     fail 'root-held test runner custody is unsafe'
 fi
 held_runner_identity="$(file_identity "$held_runner")"
@@ -651,8 +935,7 @@ fi
   && "$(file_identity "$publisher_config")" == "$publisher_identity" \
   && "$(file_identity "$sandbox_config")" == "$sandbox_identity" ]] ||
   fail 'broker or config replacement detected before candidate publication'
-[[ "$(file_identity "$runner")" == "$runner_identity" ]] ||
-  fail 'host-CI runner replacement detected before the attempt'
+assert_installed_authority_held
 [[ "$(file_identity "$candidate_path")" == "$candidate_identity" ]] ||
   fail 'qualified candidate replacement detected before publication'
 [[ "$(file_identity "$candidate_descriptor")" == "$candidate_identity" \
@@ -664,36 +947,35 @@ fi
   && "$(sha256_file "$receipt_descriptor")" == "$candidate_receipt_sha256" \
   && "$(sha256_file "$candidate_receipt_path")" == "$candidate_receipt_sha256" ]] ||
   fail 'candidate receipt identity or content drift detected before publication'
-[[ "$(file_identity "$runner_descriptor")" == "$runner_identity" \
-  && "$(sha256_file "$runner_descriptor")" == "$expected_runner_sha256" \
-  && "$(sha256_file "$runner")" == "$expected_runner_sha256" ]] ||
-  fail 'host-CI runner content drift detected before the attempt'
 [[ "$(file_identity "$held_runner")" == "$held_runner_identity" \
   && "$(sha256_file "$held_runner")" == "$expected_runner_sha256" ]] ||
   fail 'root-held host-CI runner custody changed before the attempt'
-final_remote_head="$(git -C "$repo_root" ls-remote --heads \
-  "$manifest_remote" "$control_ref" |
-  awk -v ref="$control_ref" \
-    '$2 == ref {print $1; count++} END {if (count != 1) exit 1}')" ||
-  fail 'unable to reauthenticate the exact published bootstrap ref'
-[[ "$final_remote_head" == "$head_sha" ]] ||
+"$splitctl_descriptor" jeryu-local ref-readback \
+  --repo jeryu/jeryu-tool \
+  --remote "$manifest_remote" \
+  --ref "$control_ref" \
+  --expected-head "$head_sha" \
+  --token-file "$token_file" >/dev/null ||
   fail 'published bootstrap ref changed before candidate publication'
-if [[ "$test_mode" == 0 ]]; then
-  final_ops_remote_main="$(
-    git -C "$ops_root" ls-remote --heads origin refs/heads/main |
-      awk '$2 == "refs/heads/main" {print $1; count++} END {if (count != 1) exit 1}'
-  )" || fail 'unable to reauthenticate protected SplitOps main'
-  [[ "$final_ops_remote_main" == "$ops_remote_main" \
-    && "$(git -C "$ops_root" rev-parse --verify 'HEAD^{commit}')" \
-      == "$ops_remote_main" \
-    && -z "$(git -C "$ops_root" status --porcelain --untracked-files=all)" \
-    && "$(git -c safe.directory="$held_ops_root" -C "$held_ops_root" \
-      rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" \
-    && "$(git -c safe.directory="$held_ops_root" -C "$held_ops_root" \
-      rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
-      == "$ops_remote_main" ]] ||
-    fail 'protected SplitOps authority changed before the attempt'
-fi
+"$splitctl_descriptor" jeryu-local protection-readback \
+  --repo veox/jain-split-ops \
+  --required-check jain-split-ops/required \
+  --token-file "$token_file" >/dev/null ||
+  fail 'protected SplitOps policy changed before the attempt'
+"$splitctl_descriptor" jeryu-local ref-readback \
+  --repo veox/jain-split-ops \
+  --remote "$ops_remote" \
+  --ref "$ops_ref" \
+  --expected-head "$ops_commit" \
+  --token-file "$token_file" >/dev/null ||
+  fail 'protected SplitOps main changed before the attempt'
+"$splitctl_descriptor" jeryu-local ref-readback \
+  --repo veox/jain-split-ops \
+  --remote "$ops_remote" \
+  --ref "$ops_tag_ref" \
+  --expected-head "$ops_commit" \
+  --token-file "$token_file" >/dev/null ||
+  fail 'immutable SplitOps release tag changed before the attempt'
 
 candidate_publisher_sha="$(sha256_file "$attempt_dir/publisher.config.candidate")"
 candidate_sandbox_sha="$(sha256_file "$attempt_dir/sandbox.config.candidate")"
@@ -714,7 +996,12 @@ if [[ "$test_mode" == 1 ]]; then
     exec {request_fd}<&-
     exec {candidate_fd}<&-
     exec {receipt_fd}<&-
-    exec {runner_fd}<&-
+    exec {entrypoint_fd}<&-
+    exec {authority_fd}<&-
+    exec {splitops_config_fd}<&-
+    exec {splitctl_fd}<&-
+    exec {token_fd}<&-
+    exec {pin_fd}<&-
     exec {install_fd}<&-
     exec {broker_fd}<&-
     exec {publisher_fd}<&-
@@ -729,7 +1016,12 @@ else
     exec {request_fd}<&-
     exec {candidate_fd}<&-
     exec {receipt_fd}<&-
-    exec {runner_fd}<&-
+    exec {entrypoint_fd}<&-
+    exec {authority_fd}<&-
+    exec {splitops_config_fd}<&-
+    exec {splitctl_fd}<&-
+    exec {token_fd}<&-
+    exec {pin_fd}<&-
     exec {install_fd}<&-
     exec {broker_fd}<&-
     exec {publisher_fd}<&-
