@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 # Transaction and refusal tests for install-jankurai.sh. No governed host path is touched.
 set -euo pipefail
+umask 077
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 installer="${here}/install-jankurai.sh"
 canonical_pin="${here}/../generated/jankurai-pin.env"
 tmp="$(mktemp -d /tmp/test-install-jankurai.XXXXXX)"
-trap 'rm -rf "${tmp}"' EXIT
+first_pid=""
+second_pid=""
+cleanup() {
+  set +e
+  if [[ -n "${first_pid}" ]] && kill -0 "${first_pid}" 2>/dev/null; then
+    kill "${first_pid}" 2>/dev/null
+    wait "${first_pid}" 2>/dev/null
+  fi
+  if [[ -n "${second_pid}" ]] && kill -0 "${second_pid}" 2>/dev/null; then
+    kill "${second_pid}" 2>/dev/null
+    wait "${second_pid}" 2>/dev/null
+  fi
+  rm -rf "${tmp}"
+}
+trap cleanup EXIT
 real_git="$(command -v git)"
 test_token="${tmp}/forge-token"
 printf 'test-fixture-token\n' > "${test_token}"
@@ -15,6 +30,9 @@ export JERYU_FORGE_TOKEN_FILE="${test_token}"
 
 fail() {
   printf 'test-install-jankurai: %s\n' "$*" >&2
+  if [[ -s "${tmp}/failure.log" ]]; then
+    tail -n 20 "${tmp}/failure.log" >&2
+  fi
   exit 1
 }
 
@@ -50,21 +68,107 @@ expect_failure() {
   fi
 }
 
+wait_for_file() {
+  local path="$1" description="$2"
+  for _ in {1..1000}; do
+    [[ -e "${path}" ]] && return 0
+    sleep 0.01
+  done
+  fail "${description}: timed out waiting for ${path}"
+}
+
 good="${tmp}/good-jankurai"
+good_b="${tmp}/good-jankurai-b"
 wrong="${tmp}/wrong-jankurai"
 old="${tmp}/old-jankurai"
 make_mock "${good}" "jankurai 1.6.11"
+cp "${good}" "${good_b}"
+printf '\n# distinct concurrent fixture\n' >> "${good_b}"
 make_mock "${wrong}" "jankurai 1.6.10"
 make_mock "${old}" "jankurai 1.6.9"
 good_sha="$(sha "${good}")"
+good_b_sha="$(sha "${good_b}")"
 old_sha="$(sha "${old}")"
 good_pin="${tmp}/good-pin.env"
+good_b_pin="${tmp}/good-b-pin.env"
 bad_digest_pin="${tmp}/bad-digest-pin.env"
 external_pin="${tmp}/external-pin.env"
 make_pin "${good_pin}" "${good_sha}"
+make_pin "${good_b_pin}" "${good_b_sha}"
 make_pin "${bad_digest_pin}" "$(printf '0%.0s' {1..64})"
 sed 's#^JANKURAI_REPO=.*#JANKURAI_REPO="https://github.com/neverhuman/jankurai.git"#' \
   "${good_pin}" > "${external_pin}"
+
+# Test authority is rejected before the governed target, pin, Git double, or
+# prebuilt fixture can be inspected or used.
+governed_target="/home/ubuntu/.jeryu/bin/jankurai"
+governed_target_state() {
+  if [[ -L "${governed_target}" ]]; then
+    printf 'symlink:%s' "$(stat -c '%d:%i:%u:%g:%a:%h:%N' -- "${governed_target}")"
+  elif [[ -f "${governed_target}" ]]; then
+    printf 'regular:%s:%s' \
+      "$(stat -Lc '%d:%i:%u:%g:%a:%h' -- "${governed_target}")" \
+      "$(sha "${governed_target}")"
+  elif [[ -e "${governed_target}" ]]; then
+    printf 'other:%s' "$(stat -c '%d:%i:%u:%g:%a:%h:%F' -- "${governed_target}")"
+  else
+    printf 'absent'
+  fi
+}
+governed_before="$(governed_target_state)"
+governed_git="${tmp}/governed-root-git-double"
+cat > "${governed_git}" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'invoked\n' > "${JERYU_GOVERNED_ROOT_GIT_MARKER}"
+exit 97
+SH
+chmod 755 "${governed_git}"
+expect_failure "governed root with alternate pin" env \
+  JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="/home/ubuntu/.jeryu" \
+  JERYU_PIN_ENV="${good_pin}" bash "${installer}"
+expect_failure "governed root with Git double" env \
+  JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="/home/ubuntu/.jeryu" \
+  JERYU_INSTALL_TEST_GIT_BIN="${governed_git}" \
+  JERYU_GOVERNED_ROOT_GIT_MARKER="${tmp}/governed-git-invoked" bash "${installer}"
+expect_failure "governed root with prebuilt fixture" env \
+  JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="/home/ubuntu/.jeryu" \
+  JERYU_INSTALL_TEST_PREBUILT_BINARY="${good}" bash "${installer}"
+[[ ! -e "${tmp}/governed-git-invoked" ]] ||
+  fail "governed-root refusal invoked the Git double"
+[[ "$(governed_target_state)" == "${governed_before}" ]] ||
+  fail "governed-root refusal changed the governed target"
+
+# Unsafe pre-existing lock identities fail before target inspection.
+lock_symlink_root="${tmp}/lock-symlink"
+mkdir -p "${lock_symlink_root}/bin"
+cp "${old}" "${lock_symlink_root}/bin/jankurai"
+ln -s "${tmp}/lock-symlink-target" "${lock_symlink_root}/.jankurai-install.lock"
+expect_failure "symlink install lock" \
+  run_test_install "${lock_symlink_root}" "${good_pin}" "${good}"
+[[ "$(sha "${lock_symlink_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "symlink install lock changed the target"
+
+lock_hardlink_root="${tmp}/lock-hardlink"
+mkdir -p "${lock_hardlink_root}/bin"
+cp "${old}" "${lock_hardlink_root}/bin/jankurai"
+lock_hardlink_source="${tmp}/lock-hardlink-source"
+printf 'lock\n' > "${lock_hardlink_source}"
+ln "${lock_hardlink_source}" "${lock_hardlink_root}/.jankurai-install.lock"
+expect_failure "hard-linked install lock" \
+  run_test_install "${lock_hardlink_root}" "${good_pin}" "${good}"
+[[ "$(sha "${lock_hardlink_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "hard-linked install lock changed the target"
+
+lock_mode_root="${tmp}/lock-mode"
+mkdir -p "${lock_mode_root}/bin"
+cp "${old}" "${lock_mode_root}/bin/jankurai"
+printf 'lock\n' > "${lock_mode_root}/.jankurai-install.lock"
+chmod 640 "${lock_mode_root}/.jankurai-install.lock"
+expect_failure "wrong-mode install lock" \
+  run_test_install "${lock_mode_root}" "${good_pin}" "${good}"
+[[ "$(sha "${lock_mode_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "wrong-mode install lock changed the target"
 
 # Successful transaction and receipt-bound idempotency.
 root="${tmp}/success"
@@ -77,11 +181,18 @@ run_test_install "${root}" "${good_pin}" "${good}" >/dev/null
 
 # A receipt with any fixed build flag changed is not accepted as idempotent.
 receipt="$(find "${root}/receipts/jankurai/sha256" -type f -name '*.json' -print -quit)"
-jq -e '
+receipt_lock_identity="$(stat -Lc '%d:%i:%u:%g:%a:%h' -- \
+  "${root}/.jankurai-install.lock")"
+jq -e --arg lock_path "${root}/.jankurai-install.lock" \
+  --arg lock_identity "${receipt_lock_identity}" '
   .test_mode == true and .source.verification == "test-fixture" and
   .governance.status == "diagnostic-candidate" and
   .governance.protected_main == false and
   .governance.protection_policy == "not-applicable" and
+  .installation.lock.exclusive == true and
+  .installation.lock.held_through_receipt == true and
+  .installation.lock.path == $lock_path and
+  .installation.lock.identity == $lock_identity and
   (.governance.manifest_commit | test("^[0-9a-f]{40}$")) and
   (.governance.manifest_tree | test("^[0-9a-f]{40}$")) and
   (.governance.manifest_sha256 | test("^[0-9a-f]{64}$"))
@@ -251,6 +362,94 @@ expect_failure "post-rename rollback" run_test_install "${rollback_root}" "${goo
 [[ "$(sha "${rollback_root}/rollback/jankurai/${old_sha}")" == "${old_sha}" ]] ||
   fail "rollback artifact is missing or corrupt"
 
+# The lock serializes the complete target/rollback/receipt transaction. The
+# second install reaches the lock but cannot acquire it while the first pauses
+# after replacement; after serialization, its simulated failure restores the
+# first successful install rather than the original target.
+concurrent_root="${tmp}/concurrent"
+mkdir -p "${concurrent_root}/bin"
+cp "${old}" "${concurrent_root}/bin/jankurai"
+first_ready="${tmp}/concurrent-first-ready"
+first_release="${tmp}/concurrent-first-release"
+first_acquired="${tmp}/concurrent-first-acquired"
+second_waiting="${tmp}/concurrent-second-waiting"
+second_acquired="${tmp}/concurrent-second-acquired"
+run_test_install "${concurrent_root}" "${good_pin}" "${good}" \
+  JERYU_RUN_ID="concurrent-first" \
+  JERYU_INSTALL_TEST_LOCK_ACQUIRED_FILE="${first_acquired}" \
+  JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_READY_FILE="${first_ready}" \
+  JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_RELEASE_FILE="${first_release}" \
+  >"${tmp}/concurrent-first.log" 2>&1 &
+first_pid=$!
+wait_for_file "${first_ready}" "first concurrent installer"
+[[ -e "${first_acquired}" ]] || fail "first concurrent installer never acquired the lock"
+[[ "$(sha "${concurrent_root}/bin/jankurai")" == "${good_sha}" ]] ||
+  fail "first concurrent installer did not pause after replacement"
+
+run_test_install "${concurrent_root}" "${good_b_pin}" "${good_b}" \
+  JERYU_RUN_ID="concurrent-second" \
+  JERYU_INSTALL_TEST_LOCK_WAITING_FILE="${second_waiting}" \
+  JERYU_INSTALL_TEST_LOCK_ACQUIRED_FILE="${second_acquired}" \
+  JERYU_INSTALL_TEST_FAIL_AFTER_RENAME=1 \
+  >"${tmp}/concurrent-second.log" 2>&1 &
+second_pid=$!
+wait_for_file "${second_waiting}" "second concurrent installer"
+[[ ! -e "${second_acquired}" ]] ||
+  fail "second concurrent installer entered while the first held the lock"
+kill -0 "${second_pid}" 2>/dev/null ||
+  fail "second concurrent installer exited instead of waiting for the lock"
+
+printf 'release\n' > "${first_release}"
+if ! wait "${first_pid}"; then
+  fail "first concurrent installer failed: $(tail -n 1 "${tmp}/concurrent-first.log")"
+fi
+first_pid=""
+if wait "${second_pid}"; then
+  fail "second concurrent installer unexpectedly succeeded"
+fi
+second_pid=""
+[[ -e "${second_acquired}" ]] ||
+  fail "second concurrent installer never acquired the released lock"
+[[ "$(sha "${concurrent_root}/bin/jankurai")" == "${good_sha}" ]] ||
+  fail "serialized rollback did not restore the first successful target"
+[[ "$(sha "${concurrent_root}/rollback/jankurai/${old_sha}")" == "${old_sha}" ]] ||
+  fail "concurrent rollback chain lost the original target"
+[[ "$(sha "${concurrent_root}/rollback/jankurai/${good_sha}")" == "${good_sha}" ]] ||
+  fail "concurrent rollback chain lost the first successful target"
+[[ ! -e "${concurrent_root}/rollback/jankurai/${good_b_sha}" ]] ||
+  fail "failed concurrent candidate became rollback authority"
+[[ "$(find "${concurrent_root}/bin" -maxdepth 1 -name '.jankurai.*' | wc -l)" == "0" ]] ||
+  fail "concurrent install left a staged target"
+concurrent_receipt_count="$(
+  find "${concurrent_root}/receipts/jankurai/sha256" -type f -name '*.json' | wc -l
+)"
+[[ "${concurrent_receipt_count}" == "1" ]] ||
+  fail "concurrent install did not produce exactly one successful receipt"
+concurrent_receipt="$(
+  find "${concurrent_root}/receipts/jankurai/sha256" -type f -name '*.json' -print -quit
+)"
+[[ "$(sha "${concurrent_receipt}")" == "$(basename "${concurrent_receipt}" .json)" ]] ||
+  fail "concurrent receipt is not content-addressed"
+concurrent_lock_identity="$(stat -Lc '%d:%i:%u:%g:%a:%h' -- \
+  "${concurrent_root}/.jankurai-install.lock")"
+jq -e --arg current "${good_sha}" --arg previous "${old_sha}" \
+  --arg lock_path "${concurrent_root}/.jankurai-install.lock" \
+  --arg lock_identity "${concurrent_lock_identity}" \
+  '.conclusion == "success" and .run_id == "concurrent-first" and
+   .binary.sha256 == $current and
+   .installation.previous_binary_sha256 == $previous and
+   .installation.lock.exclusive == true and
+   .installation.lock.held_through_receipt == true and
+   .installation.lock.path == $lock_path and
+   .installation.lock.identity == $lock_identity' \
+  "${concurrent_receipt}" >/dev/null ||
+  fail "concurrent receipt is not bound to the successful transaction"
+[[ -f "${concurrent_root}/.jankurai-install.lock" &&
+   ! -L "${concurrent_root}/.jankurai-install.lock" ]] ||
+  fail "install lock is not a physical file"
+[[ "$(stat -Lc '%a:%h' -- "${concurrent_root}/.jankurai-install.lock")" == "600:1" ]] ||
+  fail "install lock custody metadata is invalid"
+
 # A pre-existing content-addressed rollback name with corrupt bytes is rejected
 # before the governed target can be replaced.
 corrupt_root="${tmp}/corrupt-rollback"
@@ -262,4 +461,4 @@ expect_failure "corrupt rollback artifact" \
 [[ "$(sha "${corrupt_root}/bin/jankurai")" == "${old_sha}" ]] ||
   fail "corrupt rollback artifact changed target"
 
-printf 'install-jankurai tests passed: success idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback corrupt-rollback\n'
+printf 'install-jankurai tests passed: governed-root lock-custody success idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback concurrent-lock corrupt-rollback\n'

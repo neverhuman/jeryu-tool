@@ -20,6 +20,24 @@ require_hex() {
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 default_pin_env="${here}/../generated/jankurai-pin.env"
 test_mode="${JERYU_INSTALL_TEST_MODE:-0}"
+[[ "${test_mode}" == "0" || "${test_mode}" == "1" ]] || die "test mode must be 0 or 1"
+
+governed_install_root="/home/ubuntu/.jeryu"
+install_root_input="${JERYU_INSTALL_ROOT:-${governed_install_root}}"
+[[ "${install_root_input}" == /* ]] || die "installation root must be absolute"
+if [[ "${install_root_input}" != "/" ]]; then
+  install_root_input="${install_root_input%/}"
+fi
+install_root="$(realpath -m -- "${install_root_input}")"
+[[ "${install_root}" == "${install_root_input}" ]] ||
+  die "installation root must be canonical and symlink-free"
+if [[ "${test_mode}" == "1" && "${install_root}" == "${governed_install_root}" ]]; then
+  die "test mode must not target the governed installation root"
+fi
+if [[ "${test_mode}" != "1" && "${install_root}" != "${governed_install_root}" ]]; then
+  die "governed installation root must be ${governed_install_root}"
+fi
+
 pin_env="${JERYU_PIN_ENV:-${default_pin_env}}"
 if [[ "${pin_env}" != "${default_pin_env}" && "${test_mode}" != "1" ]]; then
   die "a non-canonical pin file is allowed only in explicit test mode"
@@ -59,17 +77,80 @@ require_hex JANKURAI_BUILD_CONTEXT_SHA256 "${JANKURAI_BUILD_CONTEXT_SHA256}" 64
 [[ "${JANKURAI_PACKAGE_PATH}" == "crates/jankurai" ]] ||
   die "unsupported package path: ${JANKURAI_PACKAGE_PATH}"
 
-install_root="${JERYU_INSTALL_ROOT:-/home/ubuntu/.jeryu}"
-if [[ "${install_root}" != "/home/ubuntu/.jeryu" && "${test_mode}" != "1" ]]; then
-  die "governed installation root must be /home/ubuntu/.jeryu"
-fi
-[[ "${install_root}" == /* ]] || die "installation root must be absolute"
-install_root="${install_root%/}"
 install_dir="${install_root}/bin"
 target="${install_dir}/jankurai"
 receipt_dir="${install_root}/receipts/jankurai/sha256"
 rollback_dir="${install_root}/rollback/jankurai"
-expected_target="$(realpath -m "${target}")"
+install_lock_path="${install_root}/.jankurai-install.lock"
+
+[[ ! -e "${install_root}" || ( -d "${install_root}" && ! -L "${install_root}" ) ]] ||
+  die "installation root is not a physical directory"
+mkdir -p "${install_root}"
+[[ -d "${install_root}" && ! -L "${install_root}" ]] ||
+  die "installation root is not a physical directory"
+[[ "$(realpath -e -- "${install_root}")" == "${install_root}" ]] ||
+  die "installation root changed during creation"
+install_root_uid="$(stat -Lc '%u' -- "${install_root}")"
+install_root_gid="$(stat -Lc '%g' -- "${install_root}")"
+install_root_mode="$(stat -Lc '%a' -- "${install_root}")"
+[[ "${install_root_uid}" == "$(id -u)" && "${install_root_gid}" == "$(id -g)" ]] ||
+  die "installation root is not owned by the current identity"
+(( (8#${install_root_mode} & 8#022) == 0 )) ||
+  die "installation root must not be group- or world-writable"
+
+if [[ ! -e "${install_lock_path}" && ! -L "${install_lock_path}" ]]; then
+  (
+    set -o noclobber
+    : > "${install_lock_path}"
+  ) 2>/dev/null || true
+fi
+[[ -f "${install_lock_path}" && ! -L "${install_lock_path}" ]] ||
+  die "installation lock is not a physical regular file"
+lock_uid="$(stat -Lc '%u' -- "${install_lock_path}")"
+lock_gid="$(stat -Lc '%g' -- "${install_lock_path}")"
+lock_mode="$(stat -Lc '%a' -- "${install_lock_path}")"
+lock_links="$(stat -Lc '%h' -- "${install_lock_path}")"
+[[ "${lock_uid}" == "$(id -u)" && "${lock_gid}" == "$(id -g)" ]] ||
+  die "installation lock is not owned by the current identity"
+[[ "${lock_mode}" == "600" && "${lock_links}" == "1" ]] ||
+  die "installation lock must be mode 0600 and single-link"
+
+command -v flock >/dev/null 2>&1 || die "flock is required for installation custody"
+exec {install_lock_fd}<"${install_lock_path}"
+installer_pid="${BASHPID}"
+if [[ "${test_mode}" == "1" && -n "${JERYU_INSTALL_TEST_LOCK_WAITING_FILE:-}" ]]; then
+  [[ "${JERYU_INSTALL_TEST_LOCK_WAITING_FILE}" == /* ]] ||
+    die "test lock waiting marker must be absolute"
+  printf 'waiting\n' > "${JERYU_INSTALL_TEST_LOCK_WAITING_FILE}"
+fi
+flock -x "${install_lock_fd}" || die "unable to acquire exclusive installation lock"
+install_lock_identity="$(stat -Lc '%d:%i:%u:%g:%a:%h' -- \
+  "/proc/${installer_pid}/fd/${install_lock_fd}")"
+
+validate_install_lock() {
+  local descriptor_identity path_identity
+  [[ -f "${install_lock_path}" && ! -L "${install_lock_path}" ]] || return 1
+  descriptor_identity="$(stat -Lc '%d:%i:%u:%g:%a:%h' -- \
+    "/proc/${installer_pid}/fd/${install_lock_fd}")" || return 1
+  path_identity="$(stat -Lc '%d:%i:%u:%g:%a:%h' -- "${install_lock_path}")" || return 1
+  [[ "${descriptor_identity}" == "${install_lock_identity}" &&
+     "${path_identity}" == "${install_lock_identity}" ]]
+}
+
+require_install_lock() {
+  validate_install_lock || die "exclusive installation lock custody changed"
+}
+
+require_install_lock
+if [[ "${test_mode}" == "1" && -n "${JERYU_INSTALL_TEST_LOCK_ACQUIRED_FILE:-}" ]]; then
+  [[ "${JERYU_INSTALL_TEST_LOCK_ACQUIRED_FILE}" == /* ]] ||
+    die "test lock acquired marker must be absolute"
+  printf 'acquired\n' > "${JERYU_INSTALL_TEST_LOCK_ACQUIRED_FILE}"
+fi
+
+mkdir -p "${install_dir}" "${receipt_dir}" "${rollback_dir}"
+require_install_lock
+expected_target="$(realpath -m -- "${target}")"
 [[ "${expected_target}" == "${target}" ]] || die "installation path traverses a symlink: ${target}"
 if [[ -L "${target}" ]]; then
   die "governed binary must not be a symlink: ${target}"
@@ -101,8 +182,6 @@ forge_git() {
   GIT_CONFIG_VALUE_1=false \
     "${git_bin}" "$@"
 }
-
-mkdir -p "${install_dir}" "${receipt_dir}" "${rollback_dir}"
 
 # Bind the installation to the exact jeryu-tool manifest checkout that
 # authorized it. Production installation is permitted only from a clean local
@@ -193,6 +272,8 @@ matching_receipt() {
       --arg digest "${JANKURAI_BINARY_SHA256}" \
       --arg version "${JANKURAI_VERSION}" \
       --arg path "${target}" \
+      --arg install_lock_path "${install_lock_path}" \
+      --arg install_lock_identity "${install_lock_identity}" \
       --arg verification "${expected_verification}" \
       --arg manifest_repo "${manifest_repo}" \
       --arg manifest_commit "${manifest_commit}" \
@@ -239,7 +320,11 @@ matching_receipt() {
        .governance.protection_policy == $protection and
        .binary.sha256 == $digest and
        .binary.version_output == $version and .installation.path == $path and
-       .installation.atomic == true and .conclusion == "success" and
+       .installation.atomic == true and .installation.lock.exclusive == true and
+       .installation.lock.path == $install_lock_path and
+       .installation.lock.identity == $install_lock_identity and
+       .installation.lock.held_through_receipt == true and
+       .conclusion == "success" and
        .test_mode == $test_mode' "${receipt}" >/dev/null 2>&1; then
       printf '%s' "${receipt}"
       return 0
@@ -248,6 +333,7 @@ matching_receipt() {
   return 1
 }
 
+require_install_lock
 if [[ -x "${target}" ]]; then
   existing_version="$("${target}" --version 2>/dev/null || true)"
   existing_sha="$(sha256_file "${target}")"
@@ -273,6 +359,7 @@ success=0
 
 rollback_target() {
   local restore="${install_dir}/.jankurai.rollback.$$"
+  validate_install_lock || return 1
   if [[ -n "${previous_backup}" ]]; then
     [[ -f "${previous_backup}" && ! -L "${previous_backup}" ]] || return 1
     [[ "$(sha256_file "${previous_backup}")" == "${previous_sha}" ]] || return 1
@@ -294,7 +381,7 @@ finish() {
   local status=$?
   trap - EXIT
   if [[ "${status}" -ne 0 && "${target_replaced}" -eq 1 && "${success}" -ne 1 ]]; then
-    rollback_target ||
+    validate_install_lock && rollback_target ||
       printf 'install-jankurai: rollback verification failed; retained only verified target bytes\n' >&2
   fi
   rm -f "${stage}"
@@ -363,6 +450,7 @@ candidate_sha="$(sha256_file "${candidate}")"
 [[ "${candidate_sha}" == "${JANKURAI_BINARY_SHA256}" ]] ||
   die "built digest mismatch: got ${candidate_sha}, want ${JANKURAI_BINARY_SHA256}"
 
+require_install_lock
 if [[ -e "${target}" ]]; then
   [[ -f "${target}" && ! -L "${target}" ]] || die "existing target is not a regular file"
   previous_sha="$(sha256_file "${target}")"
@@ -382,6 +470,7 @@ if [[ -e "${target}" ]]; then
     die "rollback artifact digest mismatch"
 fi
 
+require_install_lock
 cp "${candidate}" "${stage}"
 chmod 755 "${stage}"
 [[ "$(sha256_file "${stage}")" == "${JANKURAI_BINARY_SHA256}" ]] || die "staged digest mismatch"
@@ -389,9 +478,32 @@ sync -f "${stage}"
 if [[ "${test_mode}" == "1" && "${JERYU_INSTALL_TEST_INTERRUPT_BEFORE_RENAME:-0}" == "1" ]]; then
   die "simulated interruption before atomic rename"
 fi
+require_install_lock
 mv -f "${stage}" "${target}"
 target_replaced=1
 sync -f "${install_dir}"
+require_install_lock
+if [[ "${test_mode}" == "1" &&
+      ( -n "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_READY_FILE:-}" ||
+        -n "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_RELEASE_FILE:-}" ) ]]; then
+  [[ -n "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_READY_FILE:-}" &&
+     -n "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_RELEASE_FILE:-}" ]] ||
+    die "post-rename pause requires ready and release files"
+  [[ "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_READY_FILE}" == /* &&
+     "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_RELEASE_FILE}" == /* ]] ||
+    die "post-rename pause files must be absolute"
+  printf 'ready\n' > "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_READY_FILE}"
+  pause_released=0
+  for _ in {1..1000}; do
+    if [[ -e "${JERYU_INSTALL_TEST_PAUSE_AFTER_RENAME_RELEASE_FILE}" ]]; then
+      pause_released=1
+      break
+    fi
+    sleep 0.01
+  done
+  [[ "${pause_released}" == "1" ]] || die "timed out waiting to release post-rename pause"
+  require_install_lock
+fi
 if [[ "${test_mode}" == "1" && "${JERYU_INSTALL_TEST_FAIL_AFTER_RENAME:-0}" == "1" ]]; then
   die "simulated post-rename failure"
 fi
@@ -401,6 +513,7 @@ installed_sha="$(sha256_file "${target}")"
 [[ "${installed_version}" == "${JANKURAI_VERSION}" ]] || die "installed version verification failed"
 [[ "${installed_sha}" == "${JANKURAI_BINARY_SHA256}" ]] || die "installed digest verification failed"
 [[ "$(realpath -m "${target}")" == "${target}" ]] || die "installed path verification failed"
+require_install_lock
 
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${JERYU_RUN_ID:-install-${timestamp}-$$}"
@@ -437,6 +550,8 @@ jq -n -S \
   --arg binary_sha "${installed_sha}" \
   --arg version "${installed_version}" \
   --arg path "${target}" \
+  --arg install_lock_path "${install_lock_path}" \
+  --arg install_lock_identity "${install_lock_identity}" \
   --arg previous_sha "${previous_sha}" \
   --arg rollback_path "${previous_backup}" \
   --arg manifest_repo "${manifest_repo}" \
@@ -469,9 +584,12 @@ jq -n -S \
       protection_policy:$protection},
     binary:{sha256:$binary_sha,version_output:$version},
     installation:{path:$path,atomic:true,previous_binary_sha256:$previous_sha,
-      rollback_artifact:$rollback_path},conclusion:"success"}' > "${receipt_stage}"
+      rollback_artifact:$rollback_path,
+      lock:{path:$install_lock_path,identity:$install_lock_identity,
+        exclusive:true,held_through_receipt:true}},conclusion:"success"}' > "${receipt_stage}"
 receipt_sha="$(sha256_file "${receipt_stage}")"
 receipt_path="${receipt_dir}/${receipt_sha}.json"
+require_install_lock
 if [[ ! -f "${receipt_path}" ]]; then
   receipt_install_stage="${receipt_dir}/.${receipt_sha}.stage.$$"
   cp "${receipt_stage}" "${receipt_install_stage}"
@@ -480,6 +598,7 @@ if [[ ! -f "${receipt_path}" ]]; then
   sync -f "${receipt_dir}"
 fi
 [[ "$(sha256_file "${receipt_path}")" == "${receipt_sha}" ]] || die "receipt content address mismatch"
+require_install_lock
 
 success=1
 printf 'jeryu jankurai installed: %s sha256=%s path=%s receipt=%s\n' \
