@@ -78,7 +78,7 @@
     "ops/test-bootstrap-jankurai-root-seal.sh": {
       "command": "just check",
       "lane": "check",
-      "purpose": "exercise digest, ref, head, receipt, expiry, reuse, command, replacement, interruption, and recovery hostiles"
+      "purpose": "exercise digest, ref, head, receipt, expiry, reuse, command, pathname replacement, same-inode content drift, held-only execution, interruption, and recovery hostiles"
     },
     "ops/test-install-jankurai.sh": {
       "command": "just check",

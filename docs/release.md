@@ -50,16 +50,30 @@ It binds:
 The root-only wrapper independently verifies the generated manifest pin, every
 qualification identity, the diagnostic/no-protected-main governance fields,
 the exact local and forge ref/head/tree, protected predecessor SHA-256, both
-broker configs, and protected SplitOps-main runner. It then copies the
-candidate, receipt, and byte-exact predecessor backups into a root-owned
-recovery journal, consumes the head's sole attempt, changes only the auditor
-binary and the two `jankurai_sha256` config fields, and launches the fixed
-`jeryu jeryu-tool <head> <canonical-root> jeryu-tool/required` command as the
-reserved host-CI parent identity. Callers cannot supply a command, broker,
-runner, ref family, install root, state root, predecessor, pin, or clock.
+broker configs, and protected SplitOps-main runner. Before any candidate
+probe, it copies the candidate into root-owned mode-0500 single-link custody,
+independently reauthenticates the copy, and runs the version probe only from
+those held bytes. It materializes protected SplitOps main with `git clone
+--no-local --no-hardlinks` in a root-owned non-writable custody root, verifies
+the exact main commit, clean tree, strict object graph, and runner digest, and
+executes only that held runner. The automatically removed materialization
+preserves the runner's reviewed relative helper chain without executing any
+caller-writable checkout path.
+
+Immediately before publication, the wrapper reauthenticates candidate,
+receipt, and runner pathname/inode/content identity plus both published
+authorities. Path replacement and same-inode content drift are terminal. The
+recovery journal also retains the qualification receipt and byte-exact
+predecessor backups. The transaction consumes the head's sole attempt, changes
+only the auditor binary and the two `jankurai_sha256` config fields, and
+launches the fixed `jeryu jeryu-tool <head> <canonical-root>
+jeryu-tool/required` command as the reserved host-CI parent identity. Callers
+cannot supply a command, broker, runner, ref family, install root, state root,
+predecessor, pin, or clock.
 
 Normal completion, command failure, `HUP`, `INT`, and `TERM` restore the exact
-predecessor binary and config bytes before return. The child receives a
+predecessor binary and config bytes and remove the held runner materialization
+before return. The child receives a
 parent-death signal; if the supervisor is killed or the machine stops between
 atomic publications, the durable active marker makes the next invocation
 restore before it can consume another request. The attempt remains spent after

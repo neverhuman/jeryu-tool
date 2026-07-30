@@ -17,6 +17,10 @@
   receipt, runs only the fixed required-check command, and restores the exact
   protected predecessor broker/config bytes on completion or recovery without
   granting production installation authority.
+- Candidate probing and the required-check runner now execute only from
+  root-owned, single-link, non-writable held bytes. Final digest and authority
+  reauthentication rejects both pathname replacement and same-inode content
+  drift before candidate publication.
 
 ## jeryu-tool-v5.1.0-split.1 — 2026-07-15
 

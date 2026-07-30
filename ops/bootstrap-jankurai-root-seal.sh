@@ -72,8 +72,8 @@ fi
   exit 2
 }
 
-for tool in awk bash chmod cmp cp cut date env flock git jq mkdir mktemp mv \
-  realpath rm setpriv setsid sha256sum stat sync; do
+for tool in awk bash chmod chown cmp cp cut date env find flock git jq mkdir \
+  mktemp mv realpath rm setpriv setsid sha256sum stat sync; do
   need "$tool"
 done
 
@@ -81,6 +81,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${JERYU_BOOTSTRAP_REPO_ROOT:-${production_repo_root}}"
 install_dir="${JERYU_BOOTSTRAP_INSTALL_DIR:-${production_install_dir}}"
 state_root="${JERYU_BOOTSTRAP_STATE_ROOT:-${production_state_root}}"
+runner_custody_root="${state_root}-runner-custody"
 runner="${JERYU_BOOTSTRAP_RUNNER:-${production_runner}}"
 manifest_remote="${JERYU_BOOTSTRAP_REMOTE:-${production_remote}}"
 pin_env="${JERYU_BOOTSTRAP_PIN_ENV:-${here}/ci/lib.sh}"
@@ -107,12 +108,29 @@ if [[ "$test_mode" == 0 ]]; then
     fail 'unable to authenticate protected SplitOps main'
   [[ "$(git -C "$ops_root" rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" ]] ||
     fail 'root-seal runner is not checked out at protected SplitOps main'
+  ops_runner_relative="ops/ci/split-host-ci.sh"
 fi
 
 require_physical_dir "$repo_root" 'Jeryu Tool repository'
 require_physical_dir "$install_dir" 'host broker install directory'
 require_physical_file "$runner" 'host-CI runner'
 require_physical_file "$pin_env" 'Jankurai pin authority'
+runner_identity="$(file_identity "$runner")"
+exec {runner_fd}<"$runner"
+runner_descriptor="/proc/${BASHPID}/fd/${runner_fd}"
+[[ "$(file_identity "$runner_descriptor")" == "$runner_identity" ]] ||
+  fail 'host-CI runner descriptor identity changed'
+runner_sha256="$(sha256_file "$runner_descriptor")"
+if [[ "$test_mode" == 0 ]]; then
+  expected_runner_sha256="$(
+    git -C "$ops_root" show "$ops_remote_main:$ops_runner_relative" |
+      sha256sum | awk '{print $1}'
+  )" || fail 'unable to read the protected SplitOps runner object'
+  [[ "$runner_sha256" == "$expected_runner_sha256" ]] ||
+    fail 'public host-CI runner differs from protected SplitOps main'
+else
+  expected_runner_sha256="$runner_sha256"
+fi
 
 # shellcheck disable=SC1090
 source "$pin_env"
@@ -189,8 +207,6 @@ candidate_descriptor="/proc/${BASHPID}/fd/${candidate_fd}"
   fail 'qualified candidate descriptor identity changed'
 [[ "$(sha256_file "$candidate_descriptor")" == "$expected_candidate" ]] ||
   fail 'qualified candidate digest differs from the reviewed pin'
-[[ "$("$candidate_descriptor" --version 2>/dev/null)" == "$expected_version" ]] ||
-  fail 'qualified candidate version differs from the reviewed pin'
 
 require_physical_file "$candidate_receipt_path" 'candidate qualification receipt'
 receipt_identity="$(file_identity "$candidate_receipt_path")"
@@ -350,6 +366,15 @@ chmod 0700 -- "$state_root"
 require_physical_dir "$state_root" 'bootstrap state root'
 [[ "$(stat -Lc '%u:%a' -- "$state_root")" == "$(id -u):700" ]] ||
   fail 'bootstrap state root custody is unsafe'
+mkdir -p -- "$runner_custody_root"
+chmod 0711 -- "$runner_custody_root"
+require_physical_dir "$runner_custody_root" 'runner custody root'
+[[ "$(stat -Lc '%u:%a' -- "$runner_custody_root")" == "$(id -u):711" ]] ||
+  fail 'runner custody root is unsafe'
+if [[ "$test_mode" == 0 ]]; then
+  [[ "$(stat -Lc '%u:%g:%a' -- "$runner_custody_root")" == '0:0:711' ]] ||
+    fail 'production runner custody root is not root:root mode 0711'
+fi
 exec {lock_fd}>"$state_root/transaction.lock"
 chmod 0600 "$state_root/transaction.lock"
 flock -n "$lock_fd" || fail 'another root-seal bootstrap transaction holds custody'
@@ -379,6 +404,7 @@ atomic_install() {
 active_file="$state_root/active.json"
 restore_attempt() {
   local attempt="$1" reason="$2" attempt_dir meta predecessor_sha publisher_sha sandbox_sha
+  local runner_attempt_dir
   attempt_dir="$state_root/attempts/$attempt"
   meta="$attempt_dir/restore.json"
   require_physical_file "$meta" 'bootstrap restore metadata'
@@ -403,6 +429,16 @@ restore_attempt() {
   [[ "$(jq -er '.jankurai_sha256' "$publisher_config")" == "$predecessor_sha" \
     && "$(jq -er '.jankurai_sha256' "$sandbox_config")" == "$predecessor_sha" ]] ||
     fail 'restored configs do not bind the protected predecessor'
+  runner_attempt_dir="$runner_custody_root/$attempt"
+  if [[ -e "$runner_attempt_dir" || -L "$runner_attempt_dir" ]]; then
+    require_physical_dir "$runner_attempt_dir" 'root-held runner materialization'
+    [[ "$(dirname "$(realpath -e -- "$runner_attempt_dir")")" \
+      == "$runner_custody_root" ]] ||
+      fail 'root-held runner materialization escaped its custody root'
+    rm -rf --one-file-system -- "$runner_attempt_dir"
+    [[ ! -e "$runner_attempt_dir" && ! -L "$runner_attempt_dir" ]] ||
+      fail 'root-held runner materialization cleanup failed'
+  fi
   rm -f -- "$active_file"
   durable_sync "$state_root"
   printf '%s\n' "$reason" >"$attempt_dir/restoration-status"
@@ -442,8 +478,14 @@ mkdir -m 0700 -- "$attempt_dir" 2>/dev/null ||
 
 cp -- "$candidate_descriptor" "$attempt_dir/jankurai.candidate"
 chmod 0500 "$attempt_dir/jankurai.candidate"
+require_physical_file "$attempt_dir/jankurai.candidate" 'root-held candidate'
+[[ "$(stat -Lc '%u:%g:%a:%h' -- "$attempt_dir/jankurai.candidate")" \
+    == "$(id -u):$(id -g):500:1" ]] ||
+  fail 'root-held candidate custody is unsafe'
 [[ "$(sha256_file "$attempt_dir/jankurai.candidate")" == "$expected_candidate" ]] ||
   fail 'root-held candidate staging digest changed'
+[[ "$("$attempt_dir/jankurai.candidate" --version 2>/dev/null)" == "$expected_version" ]] ||
+  fail 'root-held candidate version differs from the reviewed pin'
 cp -- "$receipt_descriptor" "$attempt_dir/candidate-receipt.json"
 chmod 0400 "$attempt_dir/candidate-receipt.json"
 [[ "$(sha256_file "$attempt_dir/candidate-receipt.json")" == \
@@ -505,8 +547,6 @@ cmp -s "$attempt_dir/sandbox.predecessor.without-jankurai.json" \
   fail 'candidate sandbox config changed authority beyond Jankurai digest'
 rm -f -- "$attempt_dir"/*.without-jankurai.json
 
-runner_identity="$(file_identity "$runner")"
-
 active_stage="$(mktemp "$state_root/.active.XXXXXX")"
 jq -n -S --arg attempt_id "$attempt_id" --arg request "$request_sha256" \
   '{attempt_id:$attempt_id,request_sha256:$request}' >"$active_stage"
@@ -543,6 +583,57 @@ trap 'on_signal HUP' HUP
 trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 
+runner_attempt_dir="$runner_custody_root/$attempt_id"
+mkdir -m 0700 -- "$runner_attempt_dir" 2>/dev/null ||
+  fail 'runner custody identifier was already consumed'
+if [[ "$test_mode" == 1 ]]; then
+  held_runner="$runner_attempt_dir/split-host-ci.sh"
+  cp -- "$runner_descriptor" "$held_runner"
+  chmod 0500 "$held_runner"
+else
+  held_ops_root="$runner_attempt_dir/control-plane"
+  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+    git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+      -c protocol.file.allow=always clone --quiet --no-local --no-hardlinks \
+      "$ops_root" "$held_ops_root" ||
+    fail 'unable to materialize protected SplitOps runner custody'
+  git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -C "$held_ops_root" \
+    checkout --quiet --detach "$ops_remote_main" ||
+    fail 'unable to select protected SplitOps main in runner custody'
+  [[ "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
+      -c core.hooksPath=/dev/null -C "$held_ops_root" \
+      rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" \
+    && "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
+      -c core.hooksPath=/dev/null -C "$held_ops_root" \
+      rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
+      == "$ops_remote_main" \
+    && -z "$(git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
+      -c core.hooksPath=/dev/null -C "$held_ops_root" \
+      status --porcelain=v1 --untracked-files=all)" ]] ||
+    fail 'root-held SplitOps materialization differs from protected main'
+  git -c safe.directory="$held_ops_root" -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -C "$held_ops_root" fsck --strict \
+    --no-progress >/dev/null ||
+    fail 'root-held SplitOps materialization failed strict object verification'
+  held_runner="$held_ops_root/$ops_runner_relative"
+  chown -R 0:0 -- "$runner_attempt_dir"
+  find "$runner_attempt_dir" -type d -exec chmod 0555 {} +
+  find "$runner_attempt_dir" -type f -exec chmod a-w {} +
+fi
+require_physical_file "$held_runner" 'root-held host-CI runner'
+if [[ "$test_mode" == 0 ]]; then
+  [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" == '0:0:555:1' ]] ||
+    fail 'root-held production runner custody is unsafe'
+else
+  [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" \
+      == "$(id -u):$(id -g):500:1" ]] ||
+    fail 'root-held test runner custody is unsafe'
+fi
+held_runner_identity="$(file_identity "$held_runner")"
+[[ "$(sha256_file "$held_runner")" == "$expected_runner_sha256" ]] ||
+  fail 'root-held runner differs from protected runner bytes'
+
 if [[ "$test_mode" == 1 && \
   ( -n "${JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE:-}" \
     || -n "${JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE:-}" ) ]]; then
@@ -562,6 +653,47 @@ fi
   fail 'broker or config replacement detected before candidate publication'
 [[ "$(file_identity "$runner")" == "$runner_identity" ]] ||
   fail 'host-CI runner replacement detected before the attempt'
+[[ "$(file_identity "$candidate_path")" == "$candidate_identity" ]] ||
+  fail 'qualified candidate replacement detected before publication'
+[[ "$(file_identity "$candidate_descriptor")" == "$candidate_identity" \
+  && "$(sha256_file "$candidate_descriptor")" == "$expected_candidate" \
+  && "$(sha256_file "$candidate_path")" == "$expected_candidate" ]] ||
+  fail 'qualified candidate content drift detected before publication'
+[[ "$(file_identity "$candidate_receipt_path")" == "$receipt_identity" \
+  && "$(file_identity "$receipt_descriptor")" == "$receipt_identity" \
+  && "$(sha256_file "$receipt_descriptor")" == "$candidate_receipt_sha256" \
+  && "$(sha256_file "$candidate_receipt_path")" == "$candidate_receipt_sha256" ]] ||
+  fail 'candidate receipt identity or content drift detected before publication'
+[[ "$(file_identity "$runner_descriptor")" == "$runner_identity" \
+  && "$(sha256_file "$runner_descriptor")" == "$expected_runner_sha256" \
+  && "$(sha256_file "$runner")" == "$expected_runner_sha256" ]] ||
+  fail 'host-CI runner content drift detected before the attempt'
+[[ "$(file_identity "$held_runner")" == "$held_runner_identity" \
+  && "$(sha256_file "$held_runner")" == "$expected_runner_sha256" ]] ||
+  fail 'root-held host-CI runner custody changed before the attempt'
+final_remote_head="$(git -C "$repo_root" ls-remote --heads \
+  "$manifest_remote" "$control_ref" |
+  awk -v ref="$control_ref" \
+    '$2 == ref {print $1; count++} END {if (count != 1) exit 1}')" ||
+  fail 'unable to reauthenticate the exact published bootstrap ref'
+[[ "$final_remote_head" == "$head_sha" ]] ||
+  fail 'published bootstrap ref changed before candidate publication'
+if [[ "$test_mode" == 0 ]]; then
+  final_ops_remote_main="$(
+    git -C "$ops_root" ls-remote --heads origin refs/heads/main |
+      awk '$2 == "refs/heads/main" {print $1; count++} END {if (count != 1) exit 1}'
+  )" || fail 'unable to reauthenticate protected SplitOps main'
+  [[ "$final_ops_remote_main" == "$ops_remote_main" \
+    && "$(git -C "$ops_root" rev-parse --verify 'HEAD^{commit}')" \
+      == "$ops_remote_main" \
+    && -z "$(git -C "$ops_root" status --porcelain --untracked-files=all)" \
+    && "$(git -c safe.directory="$held_ops_root" -C "$held_ops_root" \
+      rev-parse --verify 'HEAD^{commit}')" == "$ops_remote_main" \
+    && "$(git -c safe.directory="$held_ops_root" -C "$held_ops_root" \
+      rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
+      == "$ops_remote_main" ]] ||
+    fail 'protected SplitOps authority changed before the attempt'
+fi
 
 candidate_publisher_sha="$(sha256_file "$attempt_dir/publisher.config.candidate")"
 candidate_sandbox_sha="$(sha256_file "$attempt_dir/sandbox.config.candidate")"
@@ -582,12 +714,13 @@ if [[ "$test_mode" == 1 ]]; then
     exec {request_fd}<&-
     exec {candidate_fd}<&-
     exec {receipt_fd}<&-
+    exec {runner_fd}<&-
     exec {install_fd}<&-
     exec {broker_fd}<&-
     exec {publisher_fd}<&-
     exec {sandbox_fd}<&-
     exec /usr/bin/setsid /usr/bin/setpriv --pdeathsig TERM -- \
-      "$runner" jeryu jeryu-tool "$head_sha" "$repo_root" \
+      "$held_runner" jeryu jeryu-tool "$head_sha" "$repo_root" \
       jeryu-tool/required
   ) >"$attempt_dir/seal.log" 2>&1 &
 else
@@ -596,6 +729,7 @@ else
     exec {request_fd}<&-
     exec {candidate_fd}<&-
     exec {receipt_fd}<&-
+    exec {runner_fd}<&-
     exec {install_fd}<&-
     exec {broker_fd}<&-
     exec {publisher_fd}<&-
@@ -606,7 +740,7 @@ else
         HOME=/var/lib/jain-host-ci-parent \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         LANG=C LC_ALL=C TZ=UTC JAIN_RELEASE_CI=1 \
-        "$runner" jeryu jeryu-tool "$head_sha" "$repo_root" \
+        "$held_runner" jeryu jeryu-tool "$head_sha" "$repo_root" \
         jeryu-tool/required
   ) >"$attempt_dir/seal.log" 2>&1 &
 fi
@@ -624,6 +758,7 @@ jq -n -S \
   --arg request_sha256 "$request_sha256" \
   --arg candidate_receipt_sha256 "$candidate_receipt_sha256" \
   --arg candidate_sha256 "$expected_candidate" \
+  --arg runner_sha256 "$expected_runner_sha256" \
   --arg predecessor_sha256 "$expected_predecessor" \
   --arg ref "$control_ref" \
   --arg head "$head_sha" \
@@ -635,7 +770,8 @@ jq -n -S \
   '{schema:"jeryu.jankurai-root-seal-bootstrap-result/v1",
     attempt_id:$attempt_id,request_sha256:$request_sha256,
     candidate_receipt_sha256:$candidate_receipt_sha256,
-    candidate_sha256:$candidate_sha256,predecessor_sha256:$predecessor_sha256,
+    candidate_sha256:$candidate_sha256,runner_sha256:$runner_sha256,
+    predecessor_sha256:$predecessor_sha256,
     ref:$ref,head_sha:$head,tree_sha:$tree,created_at_epoch:$created,
     expires_at_epoch:$expires,completed_at_epoch:$completed,seal_exit_code:$seal_rc,
     predecessor_restored:true,

@@ -17,10 +17,13 @@ The sole premerge cycle-breaker is `bootstrap-jankurai-root-seal.sh`. It may
 run only as root for the compiled PR7 topic, exact published head/tree,
 content-addressed diagnostic qualification receipt, 15-minute-or-shorter
 request, and one attempt for that head. It must retain the request, candidate,
-receipt, broker, configs, and runner by descriptor or root-held copy; launch
-only the fixed required-check command; and restore the exact protected
-predecessor on success, failure, signal, or recovery. It grants no production
-installation authority and must not become a general candidate broker.
+receipt, broker, configs, and runner by descriptor or root-held copy. Candidate
+probing and the final command may execute only from independently authenticated
+root-owned non-writable held bytes after final content and authority readback.
+It must launch only the fixed required-check command and restore the exact
+protected predecessor on success, failure, signal, or recovery. It grants no
+production installation authority and must not become a general candidate
+broker.
 
 ## Proof lane
 

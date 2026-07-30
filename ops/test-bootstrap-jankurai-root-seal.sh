@@ -241,6 +241,11 @@ assert_restored() {
     && "$(sha256sum "$sandbox" | awk '{print $1}')" == "$sandbox_original_sha" ]] ||
     fail 'protected predecessor configs were not restored byte-for-byte'
   [[ ! -e "$state/active.json" ]] || fail 'active recovery marker survived restoration'
+  if [[ -d "${state}-runner-custody" ]] \
+    && find "${state}-runner-custody" -mindepth 1 -maxdepth 1 -print -quit |
+      grep -q .; then
+    fail 'root-held runner materialization survived restoration'
+  fi
 }
 
 result_for_attempt() {
@@ -268,6 +273,7 @@ jq -e --arg predecessor "$predecessor_sha" --arg candidate "$candidate_sha" '
   and .predecessor_restored == true
   and .predecessor_sha256 == $predecessor
   and .candidate_sha256 == $candidate
+  and (.runner_sha256 | test("^[0-9a-f]{64}$"))
 ' "$result" >/dev/null
 
 one_head_state="$tmp/one-head-state"
@@ -354,10 +360,55 @@ jq -e '.conclusion == "failure" and .seal_exit_code == 23
   and .predecessor_restored == true' \
   "$(result_for_attempt "$failed_attempt")" >/dev/null
 
-replacement_request="$evidence/request-broker-replacement.json"
+replacement_request="$evidence/request-candidate-replacement.json"
 make_request "$replacement_request" "$(new_attempt)"
 ready="$tmp/replacement.ready"
 release="$tmp/replacement.release"
+cp "$candidate" "$tmp/candidate.backup"
+env "${bootstrap_env[@]}" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
+  "$bootstrap" "$replacement_request" >"$tmp/candidate-replacement.log" 2>&1 &
+replacement_pid=$!
+while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/candidate.hostile"
+chmod 0755 "$tmp/candidate.hostile"
+mv -fT "$tmp/candidate.hostile" "$candidate"
+: >"$release"
+if wait "$replacement_pid"; then
+  fail 'candidate replacement hostile unexpectedly succeeded'
+fi
+grep -Fq 'qualified candidate replacement detected' \
+  "$tmp/candidate-replacement.log"
+mv -fT "$tmp/candidate.backup" "$candidate"
+chmod 0755 "$candidate"
+assert_restored
+
+replacement_request="$evidence/request-candidate-content-drift.json"
+make_request "$replacement_request" "$(new_attempt)"
+rm -f "$ready" "$release"
+cp "$candidate" "$tmp/candidate.backup"
+env "${bootstrap_env[@]}" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
+  "$bootstrap" "$replacement_request" >"$tmp/candidate-content-drift.log" 2>&1 &
+replacement_pid=$!
+while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
+printf '\n# same-inode candidate content drift\n' >>"$candidate"
+: >"$release"
+if wait "$replacement_pid"; then
+  fail 'candidate same-inode content drift hostile unexpectedly succeeded'
+fi
+grep -Fq 'qualified candidate content drift detected' \
+  "$tmp/candidate-content-drift.log"
+cp "$tmp/candidate.backup" "$candidate"
+rm -f "$tmp/candidate.backup"
+chmod 0755 "$candidate"
+assert_restored
+
+replacement_request="$evidence/request-broker-replacement.json"
+make_request "$replacement_request" "$(new_attempt)"
+rm -f "$ready" "$release"
 env "${bootstrap_env[@]}" \
   JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
   JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
@@ -415,6 +466,28 @@ mv -fT "$tmp/runner.backup" "$runner"
 chmod 0755 "$runner"
 assert_restored
 
+replacement_request="$evidence/request-runner-content-drift.json"
+make_request "$replacement_request" "$(new_attempt)"
+rm -f "$ready" "$release"
+cp "$runner" "$tmp/runner.backup"
+env "${bootstrap_env[@]}" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE="$ready" \
+  JERYU_BOOTSTRAP_TEST_PAUSE_RELEASE_FILE="$release" \
+  "$bootstrap" "$replacement_request" >"$tmp/runner-content-drift.log" 2>&1 &
+replacement_pid=$!
+while [[ ! -e "$ready" ]]; do read -r -t 0.05 _ </dev/null || true; done
+printf '\n# same-inode runner content drift\n' >>"$runner"
+: >"$release"
+if wait "$replacement_pid"; then
+  fail 'runner same-inode content drift hostile unexpectedly succeeded'
+fi
+grep -Fq 'host-CI runner content drift detected' \
+  "$tmp/runner-content-drift.log"
+cp "$tmp/runner.backup" "$runner"
+rm -f "$tmp/runner.backup"
+chmod 0755 "$runner"
+assert_restored
+
 interrupt_attempt="$(new_attempt)"
 interrupt_request="$evidence/request-interrupt.json"
 make_request "$interrupt_request" "$interrupt_attempt"
@@ -465,4 +538,4 @@ grep -Fq 'release broker Jankurai rejects caller receipt authority' \
   "${here}/ci/lib.sh" ||
   fail 'ordinary release broker still accepts caller receipt authority'
 
-printf 'root-seal bootstrap tests passed: digest ref head tree receipt expiry reuse command replacement interruption recovery restoration\n'
+printf 'root-seal bootstrap tests passed: digest ref head tree receipt expiry reuse command replacement same-inode-drift held-execution interruption recovery restoration\n'
