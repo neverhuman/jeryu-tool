@@ -9,6 +9,7 @@ canonical_pin="${here}/../generated/jankurai-pin.env"
 tmp="$(mktemp -d /tmp/test-install-jankurai.XXXXXX)"
 first_pid=""
 second_pid=""
+race_pid=""
 cleanup() {
   set +e
   if [[ -n "${first_pid}" ]] && kill -0 "${first_pid}" 2>/dev/null; then
@@ -18,6 +19,10 @@ cleanup() {
   if [[ -n "${second_pid}" ]] && kill -0 "${second_pid}" 2>/dev/null; then
     kill "${second_pid}" 2>/dev/null
     wait "${second_pid}" 2>/dev/null
+  fi
+  if [[ -n "${race_pid}" ]] && kill -0 "${race_pid}" 2>/dev/null; then
+    kill "${race_pid}" 2>/dev/null
+    wait "${race_pid}" 2>/dev/null
   fi
   rm -rf "${tmp}"
 }
@@ -33,6 +38,10 @@ fail() {
   if [[ -s "${tmp}/failure.log" ]]; then
     tail -n 20 "${tmp}/failure.log" >&2
   fi
+  for log in "${tmp}"/*-race.log; do
+    [[ -s "${log}" ]] || continue
+    tail -n 20 "${log}" >&2
+  done
   exit 1
 }
 
@@ -169,6 +178,96 @@ expect_failure "wrong-mode install lock" \
   run_test_install "${lock_mode_root}" "${good_pin}" "${good}"
 [[ "$(sha "${lock_mode_root}/bin/jankurai")" == "${old_sha}" ]] ||
   fail "wrong-mode install lock changed the target"
+
+# Receipt and rollback ancestry must be physical beneath the authenticated
+# install root. Neither symlink may turn a transaction write into an external
+# write, even when the external directory is writable by the test identity.
+ancestor_external="${tmp}/ancestor-external"
+mkdir -p "${ancestor_external}"
+ancestor_sentinel="${ancestor_external}/sentinel"
+printf 'ancestor sentinel\n' > "${ancestor_sentinel}"
+ancestor_sentinel_sha="$(sha "${ancestor_sentinel}")"
+
+receipt_symlink_root="${tmp}/receipt-symlink-ancestor"
+mkdir -p "${receipt_symlink_root}/bin"
+cp "${old}" "${receipt_symlink_root}/bin/jankurai"
+ln -s "${ancestor_external}" "${receipt_symlink_root}/receipts"
+expect_failure "symlinked receipt ancestor" \
+  run_test_install "${receipt_symlink_root}" "${good_pin}" "${good}"
+[[ "$(sha "${receipt_symlink_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "symlinked receipt ancestor changed the target"
+[[ "$(sha "${ancestor_sentinel}")" == "${ancestor_sentinel_sha}" ]] ||
+  fail "symlinked receipt ancestor changed the external sentinel"
+[[ "$(find "${ancestor_external}" -mindepth 1 -maxdepth 1 -type f | wc -l)" == "1" ]] ||
+  fail "symlinked receipt ancestor created an external artifact"
+
+rollback_symlink_root="${tmp}/rollback-symlink-ancestor"
+mkdir -p "${rollback_symlink_root}/bin"
+cp "${old}" "${rollback_symlink_root}/bin/jankurai"
+ln -s "${ancestor_external}" "${rollback_symlink_root}/rollback"
+expect_failure "symlinked rollback ancestor" \
+  run_test_install "${rollback_symlink_root}" "${good_pin}" "${good}"
+[[ "$(sha "${rollback_symlink_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "symlinked rollback ancestor changed the target"
+[[ "$(sha "${ancestor_sentinel}")" == "${ancestor_sentinel_sha}" ]] ||
+  fail "symlinked rollback ancestor changed the external sentinel"
+[[ "$(find "${ancestor_external}" -mindepth 1 -maxdepth 1 -type f | wc -l)" == "1" ]] ||
+  fail "symlinked rollback ancestor created an external artifact"
+
+# Existing writable leaves must be single-link physical files. A target hard
+# link could otherwise make target custody ambiguous even though rename itself
+# is atomic.
+hardlink_target_root="${tmp}/hardlink-target"
+mkdir -p "${hardlink_target_root}/bin"
+hardlink_target_sentinel="${tmp}/hardlink-target-sentinel"
+cp "${old}" "${hardlink_target_sentinel}"
+ln "${hardlink_target_sentinel}" "${hardlink_target_root}/bin/jankurai"
+hardlink_target_sha="$(sha "${hardlink_target_sentinel}")"
+expect_failure "hard-linked target" \
+  run_test_install "${hardlink_target_root}" "${good_pin}" "${good}"
+[[ "$(sha "${hardlink_target_sentinel}")" == "${hardlink_target_sha}" ]] ||
+  fail "hard-linked target changed the external sentinel"
+[[ "$(stat -Lc '%h' -- "${hardlink_target_sentinel}")" == "2" ]] ||
+  fail "hard-linked target custody was destructively changed"
+
+hardlink_rollback_root="${tmp}/hardlink-rollback"
+mkdir -p "${hardlink_rollback_root}/bin" "${hardlink_rollback_root}/rollback/jankurai"
+cp "${old}" "${hardlink_rollback_root}/bin/jankurai"
+hardlink_rollback_sentinel="${tmp}/hardlink-rollback-sentinel"
+cp "${old}" "${hardlink_rollback_sentinel}"
+ln "${hardlink_rollback_sentinel}" \
+  "${hardlink_rollback_root}/rollback/jankurai/${old_sha}"
+hardlink_rollback_sha="$(sha "${hardlink_rollback_sentinel}")"
+expect_failure "hard-linked rollback leaf" \
+  run_test_install "${hardlink_rollback_root}" "${good_pin}" "${good}"
+[[ "$(sha "${hardlink_rollback_root}/bin/jankurai")" == "${old_sha}" ]] ||
+  fail "hard-linked rollback leaf changed the target"
+[[ "$(sha "${hardlink_rollback_sentinel}")" == "${hardlink_rollback_sha}" ]] ||
+  fail "hard-linked rollback leaf changed the external sentinel"
+
+# The old PID-derived stage name is no longer an authority. Pre-seed that exact
+# legacy leaf as a symlink in the process that execs the installer; the
+# unpredictable exclusive stage must ignore it and preserve the sentinel.
+predictable_leaf_root="${tmp}/predictable-leaf"
+predictable_leaf_sentinel="${tmp}/predictable-leaf-sentinel"
+printf 'predictable leaf sentinel\n' > "${predictable_leaf_sentinel}"
+predictable_leaf_sha="$(sha "${predictable_leaf_sentinel}")"
+# The single-quoted body intentionally expands only inside the hostile process.
+# shellcheck disable=SC2016
+env JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="${predictable_leaf_root}" \
+  JERYU_PIN_ENV="${good_pin}" JERYU_INSTALL_TEST_PREBUILT_BINARY="${good}" \
+  JERYU_RUN_ID="predictable-leaf" JERYU_PID_ROOT="${predictable_leaf_root}" \
+  JERYU_PID_SENTINEL="${predictable_leaf_sentinel}" JERYU_PID_INSTALLER="${installer}" \
+  bash -c '
+    set -euo pipefail
+    mkdir -p "${JERYU_PID_ROOT}/bin"
+    ln -s "${JERYU_PID_SENTINEL}" "${JERYU_PID_ROOT}/bin/.jankurai.stage.$$"
+    exec bash "${JERYU_PID_INSTALLER}"
+  ' >/dev/null
+[[ "$(sha "${predictable_leaf_root}/bin/jankurai")" == "${good_sha}" ]] ||
+  fail "legacy predictable leaf prevented the governed install"
+[[ "$(sha "${predictable_leaf_sentinel}")" == "${predictable_leaf_sha}" ]] ||
+  fail "legacy predictable leaf changed the external sentinel"
 
 # Successful transaction and receipt-bound idempotency.
 root="${tmp}/success"
@@ -362,6 +461,72 @@ expect_failure "post-rename rollback" run_test_install "${rollback_root}" "${goo
 [[ "$(sha "${rollback_root}/rollback/jankurai/${old_sha}")" == "${old_sha}" ]] ||
   fail "rollback artifact is missing or corrupt"
 
+# Replacement after directory descriptors are retained must fail before any
+# candidate or receipt byte reaches the replacement symlink target.
+directory_race_root="${tmp}/directory-replacement-race"
+directory_race_external="${tmp}/directory-replacement-external"
+mkdir -p "${directory_race_external}"
+directory_race_sentinel="${directory_race_external}/sentinel"
+printf 'directory race sentinel\n' > "${directory_race_sentinel}"
+directory_race_sentinel_sha="$(sha "${directory_race_sentinel}")"
+directory_race_ready="${tmp}/directory-race-ready"
+directory_race_release="${tmp}/directory-race-release"
+run_test_install "${directory_race_root}" "${good_pin}" "${good}" \
+  JERYU_INSTALL_TEST_PAUSE_AFTER_CUSTODY_READY_FILE="${directory_race_ready}" \
+  JERYU_INSTALL_TEST_PAUSE_AFTER_CUSTODY_RELEASE_FILE="${directory_race_release}" \
+  >"${tmp}/directory-race.log" 2>&1 &
+race_pid=$!
+wait_for_file "${directory_race_ready}" "directory replacement installer"
+mv "${directory_race_root}/receipts" "${directory_race_root}/receipts-retained"
+ln -s "${directory_race_external}" "${directory_race_root}/receipts"
+printf 'release\n' > "${directory_race_release}"
+if wait "${race_pid}"; then
+  fail "directory replacement race unexpectedly succeeded"
+fi
+race_pid=""
+[[ ! -e "${directory_race_root}/bin/jankurai" ]] ||
+  fail "directory replacement race installed a target"
+[[ "$(sha "${directory_race_sentinel}")" == "${directory_race_sentinel_sha}" ]] ||
+  fail "directory replacement race changed the external sentinel"
+[[ "$(find "${directory_race_external}" -mindepth 1 -maxdepth 1 -type f | wc -l)" == "1" ]] ||
+  fail "directory replacement race created an external artifact"
+
+# Replacement of the unpredictable stage name after exclusive creation must
+# also fail. The installer writes only through the retained descriptor and
+# verifies its named link before rename, so the attacker-selected sentinel is
+# never opened for writing.
+leaf_race_root="${tmp}/leaf-replacement-race"
+leaf_race_sentinel="${tmp}/leaf-replacement-sentinel"
+printf 'leaf race sentinel\n' > "${leaf_race_sentinel}"
+leaf_race_sentinel_sha="$(sha "${leaf_race_sentinel}")"
+leaf_race_ready="${tmp}/leaf-race-ready"
+leaf_race_release="${tmp}/leaf-race-release"
+run_test_install "${leaf_race_root}" "${good_pin}" "${good}" \
+  JERYU_INSTALL_TEST_PAUSE_BEFORE_STAGE_RENAME_READY_FILE="${leaf_race_ready}" \
+  JERYU_INSTALL_TEST_PAUSE_BEFORE_STAGE_RENAME_RELEASE_FILE="${leaf_race_release}" \
+  >"${tmp}/leaf-race.log" 2>&1 &
+race_pid=$!
+wait_for_file "${leaf_race_ready}" "leaf replacement installer"
+mapfile -t leaf_race_stages < <(
+  find "${leaf_race_root}/bin" -maxdepth 1 -type f -name '.jankurai.stage.*' -print
+)
+[[ "${#leaf_race_stages[@]}" == "1" ]] ||
+  fail "leaf replacement race did not expose exactly one retained stage"
+leaf_race_name="$(basename "${leaf_race_stages[0]}")"
+[[ "${leaf_race_name}" =~ ^\.jankurai\.stage\.[0-9a-f-]{36}$ ]] ||
+  fail "transaction stage name is not an unpredictable kernel identity"
+rm -f -- "${leaf_race_stages[0]}"
+ln -s "${leaf_race_sentinel}" "${leaf_race_stages[0]}"
+printf 'release\n' > "${leaf_race_release}"
+if wait "${race_pid}"; then
+  fail "leaf replacement race unexpectedly succeeded"
+fi
+race_pid=""
+[[ ! -e "${leaf_race_root}/bin/jankurai" ]] ||
+  fail "leaf replacement race installed a target"
+[[ "$(sha "${leaf_race_sentinel}")" == "${leaf_race_sentinel_sha}" ]] ||
+  fail "leaf replacement race changed the external sentinel"
+
 # The lock serializes the complete target/rollback/receipt transaction. The
 # second install reaches the lock but cannot acquire it while the first pauses
 # after replacement; after serialization, its simulated failure restores the
@@ -461,4 +626,4 @@ expect_failure "corrupt rollback artifact" \
 [[ "$(sha "${corrupt_root}/bin/jankurai")" == "${old_sha}" ]] ||
   fail "corrupt rollback artifact changed target"
 
-printf 'install-jankurai tests passed: governed-root lock-custody success idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback concurrent-lock corrupt-rollback\n'
+printf 'install-jankurai tests passed: governed-root lock-custody physical-ancestors exclusive-leaves hard-links replacement-races external-sentinels success idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback concurrent-lock corrupt-rollback\n'

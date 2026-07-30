@@ -65,6 +65,16 @@
       "lane": "ci-check",
       "purpose": "verify the generator/installer parse and the pin stays consistent"
     },
+    "ops/install-jankurai.sh": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "prove descriptor-retained physical install custody and unpredictable exclusive transaction leaves"
+    },
+    "ops/test-install-jankurai.sh": {
+      "command": "just check",
+      "lane": "check",
+      "purpose": "exercise symlink, hard-link, replacement-race, sentinel, rollback, and concurrency installer hostiles"
+    },
     "ops/git-hooks/": {
       "command": "just fast && just check && just score",
       "lane": "ci",
