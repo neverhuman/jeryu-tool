@@ -249,7 +249,8 @@ jq -n -S \
   --arg tag "$splitops_tag" \
   --arg splitctl "$splitctl_sha" \
   --arg token "$token_file" \
-  '{schema_version:"jain.native-build-tools-installer-config/v1",
+  '{schema_version:"jain.native-build-tools-installer-config/v2",
+    bootstrap_expires_at:"",
     install_dir:$install,
     control_remote:"http://127.0.0.1:8787/git/veox/jain-split-ops.git",
     control_ref:"refs/heads/main",control_commit:$commit,
@@ -455,9 +456,30 @@ config_substitution_hostile jeryu-ref-substitution "$authority_config" \
 config_substitution_hostile splitops-remote-substitution "$splitops_config" \
   '.control_remote="http://127.0.0.1:8787/git/veox/hostile.git"' \
   'installed SplitOps authority does not name the fixed forge'
+config_substitution_hostile splitops-v1-downgrade "$splitops_config" \
+  '.schema_version="jain.native-build-tools-installer-config/v1"' \
+  'installed SplitOps authority config is invalid'
+config_substitution_hostile splitops-missing-bootstrap-expiry "$splitops_config" \
+  'del(.bootstrap_expires_at)' \
+  'installed SplitOps authority config is invalid'
+config_substitution_hostile splitops-unknown-field "$splitops_config" \
+  '.unexpected_authority=true' \
+  'installed SplitOps authority config is invalid'
+config_substitution_hostile splitops-active-bootstrap-authority "$splitops_config" \
+  '.bootstrap_expires_at="2099-01-01T00:00:00Z"' \
+  'installed SplitOps authority config is invalid'
+config_substitution_hostile splitops-expired-bootstrap-authority "$splitops_config" \
+  '.bootstrap_expires_at="1970-01-01T00:00:00Z"' \
+  'installed SplitOps authority config is invalid'
+config_substitution_hostile splitops-commit-substitution "$splitops_config" \
+  '.control_commit=("a" * 40)' \
+  'cannot authenticate protected SplitOps main and immutable release tag'
 config_substitution_hostile splitops-tag-substitution "$splitops_config" \
   '.control_tag_ref="refs/tags/jain-split-ops-v10.0.0-split.99"' \
   'cannot authenticate protected SplitOps main and immutable release tag'
+config_substitution_hostile splitops-broker-digest-drift "$splitops_config" \
+  '.splitctl_sha256=("a" * 64)' \
+  'installed SplitOps broker/config binding is inconsistent'
 
 protection_request="$evidence/request-protection-mismatch.json"
 make_request "$protection_request" "$(new_attempt)"

@@ -256,10 +256,12 @@ fi
 jq -e '
   select(type == "object")
   | select(keys == [
-      "control_commit", "control_ref", "control_remote", "control_tag_ref",
-      "install_dir", "schema_version", "splitctl_sha256", "token_file"
+      "bootstrap_expires_at", "control_commit", "control_ref",
+      "control_remote", "control_tag_ref", "install_dir", "schema_version",
+      "splitctl_sha256", "token_file"
     ])
-  | select(.schema_version == "jain.native-build-tools-installer-config/v1")
+  | select(.schema_version == "jain.native-build-tools-installer-config/v2")
+  | select(.bootstrap_expires_at == "")
   | select(.control_ref == "refs/heads/main")
   | select(.control_commit | test("^[0-9a-f]{40}$"))
   | select(.control_tag_ref
