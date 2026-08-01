@@ -131,6 +131,16 @@ runner="$splitops_repo/ops/ci/split-host-ci.sh"
 cat >"$runner" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
+ops_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec "$ops_root/ops/ci/split-host-ci-parent.sh" "$@"
+RUNNER
+parent="$splitops_repo/ops/ci/split-host-ci-parent.sh"
+cat >"$parent" <<'PARENT'
+#!/usr/bin/env bash
+set -euo pipefail
+ops_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ "$("$ops_root/ops/ci/host-ci-integrity.sh" "$ops_root" \
+  --ref refs/remotes/origin/main)" == "$MOCK_SPLITOPS_COMMIT" ]]
 [[ "$#" == 5 && "$1" == jeryu && "$2" == jeryu-tool \
   && "$3" == "$MOCK_HEAD" && "$4" == "$JERYU_BOOTSTRAP_REPO_ROOT" \
   && "$5" == jeryu-tool/required ]]
@@ -149,9 +159,18 @@ if [[ -n "${MOCK_SLEEP_SECONDS:-}" ]]; then
   sleep "$MOCK_SLEEP_SECONDS"
 fi
 exit "${MOCK_EXIT_CODE:-0}"
-RUNNER
-chmod 0755 "$runner"
-git -C "$splitops_repo" add ops/ci/split-host-ci.sh
+PARENT
+integrity="$splitops_repo/ops/ci/host-ci-integrity.sh"
+cat >"$integrity" <<'INTEGRITY'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 3 && "$2" == --ref ]]
+git -c safe.directory="$1" -c core.fsmonitor=false \
+  -c core.hooksPath=/dev/null -C "$1" rev-parse --verify "$3^{commit}"
+INTEGRITY
+chmod 0755 "$runner" "$parent" "$integrity"
+git -C "$splitops_repo" add ops/ci/split-host-ci.sh \
+  ops/ci/split-host-ci-parent.sh ops/ci/host-ci-integrity.sh
 git -C "$splitops_repo" commit -q -m 'test: protected splitops runner'
 splitops_commit="$(git -C "$splitops_repo" rev-parse HEAD)"
 splitops_tag=refs/tags/jain-split-ops-v10.0.0-split.15
@@ -382,7 +401,8 @@ bootstrap_env=(
     JERYU_BOOTSTRAP_NOW=1000 \
     MOCK_JERYU_REMOTE_PATH="$remote" \
     MOCK_SPLITOPS_REMOTE_PATH="$splitops_remote" \
-    MOCK_HEAD="$head_sha" MOCK_CANDIDATE_SHA="$candidate_sha"
+    MOCK_HEAD="$head_sha" MOCK_CANDIDATE_SHA="$candidate_sha" \
+    MOCK_SPLITOPS_COMMIT="$splitops_commit"
 )
 invoke() {
   env "${bootstrap_env[@]}" "$bootstrap" "$@"
@@ -517,6 +537,8 @@ jq -e --arg predecessor "$predecessor_sha" --arg candidate "$candidate_sha" '
   and .predecessor_sha256 == $predecessor
   and .candidate_sha256 == $candidate
   and (.runner_sha256 | test("^[0-9a-f]{64}$"))
+  and (.parent_sha256 | test("^[0-9a-f]{64}$"))
+  and (.integrity_sha256 | test("^[0-9a-f]{64}$"))
 ' "$result" >/dev/null
 
 one_head_request="$evidence/request-one-head.json"

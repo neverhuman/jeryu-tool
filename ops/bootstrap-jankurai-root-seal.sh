@@ -898,27 +898,62 @@ jq -e \
       "${ops_tag_ref}^{tree}")" ]] ||
   fail 'protected SplitOps main and immutable tag trees differ'
 ops_runner_relative="ops/ci/split-host-ci.sh"
+ops_parent_relative="ops/ci/split-host-ci-parent.sh"
+ops_integrity_relative="ops/ci/host-ci-integrity.sh"
 held_runner="$held_ops_root/$ops_runner_relative"
+held_parent="$held_ops_root/$ops_parent_relative"
+held_integrity="$held_ops_root/$ops_integrity_relative"
 expected_runner_sha256="$(tagged_blob_sha256 "$held_ops_root" \
   "$ops_commit" "$ops_runner_relative")"
+expected_parent_sha256="$(tagged_blob_sha256 "$held_ops_root" \
+  "$ops_commit" "$ops_parent_relative")"
+expected_integrity_sha256="$(tagged_blob_sha256 "$held_ops_root" \
+  "$ops_commit" "$ops_integrity_relative")"
+# The unprivileged parent asks host-ci-integrity for the authenticated main
+# tracking ref. Materialization deliberately retains no remote or remote refs,
+# so create only that exact local authority ref after both main and tag agree.
+ops_tracking_ref="refs/remotes/origin/${ops_ref#refs/heads/}"
+[[ -z "$(git -C "$held_ops_root" for-each-ref --format='%(refname)' \
+  refs/remotes)" ]] ||
+  fail 'protected SplitOps materialization retained remote-tracking refs'
+git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+  -C "$held_ops_root" update-ref --no-deref "$ops_tracking_ref" \
+  "$ops_commit" "$(printf '0%.0s' {1..40})" ||
+  fail 'cannot bind protected SplitOps parent tracking ref'
+[[ "$(git -C "$held_ops_root" rev-parse --verify \
+  "${ops_tracking_ref}^{commit}")" == "$ops_commit" ]] ||
+  fail 'protected SplitOps parent tracking ref is not exact'
 if [[ "$test_mode" == 0 ]]; then
   chown -R 0:0 -- "$runner_attempt_dir"
 fi
 find "$runner_attempt_dir" -type d -exec chmod 0555 {} +
 find "$runner_attempt_dir" -type f -exec chmod 0444 {} +
-chmod 0555 "$held_runner"
+chmod 0555 "$held_runner" "$held_parent" "$held_integrity"
 require_physical_file "$held_runner" 'root-held host-CI runner'
+require_physical_file "$held_parent" 'root-held host-CI parent helper'
+require_physical_file "$held_integrity" 'root-held host-CI integrity helper'
 if [[ "$test_mode" == 0 ]]; then
-  [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" == '0:0:555:1' ]] ||
+  [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" == '0:0:555:1' \
+    && "$(stat -Lc '%u:%g:%a:%h' -- "$held_parent")" == '0:0:555:1' \
+    && "$(stat -Lc '%u:%g:%a:%h' -- "$held_integrity")" \
+      == '0:0:555:1' ]] ||
     fail 'root-held production runner custody is unsafe'
 else
   [[ "$(stat -Lc '%u:%g:%a:%h' -- "$held_runner")" \
+      == "$authority_uid:$authority_gid:555:1" \
+    && "$(stat -Lc '%u:%g:%a:%h' -- "$held_parent")" \
+      == "$authority_uid:$authority_gid:555:1" \
+    && "$(stat -Lc '%u:%g:%a:%h' -- "$held_integrity")" \
       == "$authority_uid:$authority_gid:555:1" ]] ||
     fail 'root-held test runner custody is unsafe'
 fi
 held_runner_identity="$(file_identity "$held_runner")"
-[[ "$(sha256_file "$held_runner")" == "$expected_runner_sha256" ]] ||
-  fail 'root-held runner differs from protected runner bytes'
+held_parent_identity="$(file_identity "$held_parent")"
+held_integrity_identity="$(file_identity "$held_integrity")"
+[[ "$(sha256_file "$held_runner")" == "$expected_runner_sha256" \
+  && "$(sha256_file "$held_parent")" == "$expected_parent_sha256" \
+  && "$(sha256_file "$held_integrity")" == "$expected_integrity_sha256" ]] ||
+  fail 'root-held runner helpers differ from protected bytes'
 
 if [[ "$test_mode" == 1 && \
   ( -n "${JERYU_BOOTSTRAP_TEST_PAUSE_READY_FILE:-}" \
@@ -950,7 +985,13 @@ assert_installed_authority_held
   && "$(sha256_file "$candidate_receipt_path")" == "$candidate_receipt_sha256" ]] ||
   fail 'candidate receipt identity or content drift detected before publication'
 [[ "$(file_identity "$held_runner")" == "$held_runner_identity" \
-  && "$(sha256_file "$held_runner")" == "$expected_runner_sha256" ]] ||
+  && "$(file_identity "$held_parent")" == "$held_parent_identity" \
+  && "$(file_identity "$held_integrity")" == "$held_integrity_identity" \
+  && "$(sha256_file "$held_runner")" == "$expected_runner_sha256" \
+  && "$(sha256_file "$held_parent")" == "$expected_parent_sha256" \
+  && "$(sha256_file "$held_integrity")" == "$expected_integrity_sha256" \
+  && "$(git -C "$held_ops_root" rev-parse --verify \
+    "${ops_tracking_ref}^{commit}")" == "$ops_commit" ]] ||
   fail 'root-held host-CI runner custody changed before the attempt'
 "$splitctl_descriptor" jeryu-local ref-readback \
   --repo jeryu/jeryu-tool \
@@ -1053,6 +1094,8 @@ jq -n -S \
   --arg candidate_receipt_sha256 "$candidate_receipt_sha256" \
   --arg candidate_sha256 "$expected_candidate" \
   --arg runner_sha256 "$expected_runner_sha256" \
+  --arg parent_sha256 "$expected_parent_sha256" \
+  --arg integrity_sha256 "$expected_integrity_sha256" \
   --arg predecessor_sha256 "$expected_predecessor" \
   --arg ref "$control_ref" \
   --arg head "$head_sha" \
@@ -1065,6 +1108,7 @@ jq -n -S \
     attempt_id:$attempt_id,request_sha256:$request_sha256,
     candidate_receipt_sha256:$candidate_receipt_sha256,
     candidate_sha256:$candidate_sha256,runner_sha256:$runner_sha256,
+    parent_sha256:$parent_sha256,integrity_sha256:$integrity_sha256,
     predecessor_sha256:$predecessor_sha256,
     ref:$ref,head_sha:$head,tree_sha:$tree,created_at_epoch:$created,
     expires_at_epoch:$expires,completed_at_epoch:$completed,seal_exit_code:$seal_rc,
