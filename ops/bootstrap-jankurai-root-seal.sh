@@ -213,7 +213,7 @@ jq -e '
   | select(.bootstrap_sha256 | test("^[0-9a-f]{64}$"))
   | select(.control_commit | test("^[0-9a-f]{40}$"))
   | select(.control_ref
-      == "refs/heads/codex/jeryu-tool-root-seal-topic-r8-20260801")
+      == "refs/heads/codex/jeryu-tool-root-seal-final-ref-r10-20260801")
   | select(.control_remote
       == "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git")
   | select(.control_tree | test("^[0-9a-f]{40}$"))
