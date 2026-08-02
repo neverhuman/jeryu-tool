@@ -1,5 +1,15 @@
 # Changelog
 
+## jeryu-tool-v5.1.0-split.5 — 2026-08-02
+
+### Changed
+- Rotated the governed auditor authority to the immutable Jankurai split.3
+  repair, which scopes skipped-directory detection to repository-relative
+  paths and prevents an ancestor directory named `target` from hiding source.
+- Bound the exact source tree/archive, unchanged Cargo.lock and closed vendor
+  closure, updated hermetic build context, and twice-reproduced OCI binary
+  digest for the protected split.3 commit.
+
 ## jeryu-tool-v5.1.0-split.4 — 2026-07-29
 
 ### Changed
