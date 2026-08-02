@@ -6,6 +6,11 @@ umask 077
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 installer="${here}/install-jankurai.sh"
 canonical_pin="${here}/../generated/jankurai-pin.env"
+canonical_tag="$(sed -n 's/^JANKURAI_TAG="\([^"]*\)"$/\1/p' "${canonical_pin}")"
+[[ -n "${canonical_tag}" ]] || {
+  printf 'test-install-jankurai: canonical pin has no JANKURAI_TAG\n' >&2
+  exit 1
+}
 tmp="$(mktemp -d /tmp/test-install-jankurai.XXXXXX)"
 first_pid=""
 second_pid=""
@@ -392,7 +397,7 @@ offline_rev="$(git -C "${offline_source}" rev-parse HEAD)"
 offline_tree="$(git -C "${offline_source}" rev-parse 'HEAD^{tree}')"
 offline_archive="$(git -C "${offline_source}" archive --format=tar HEAD | sha256sum | awk '{print $1}')"
 offline_lock="$(sha "${offline_source}/Cargo.lock")"
-git -C "${offline_source}" tag v1.6.11-deadlang-precision-split.2
+git -C "${offline_source}" tag "${canonical_tag}"
 offline_pin="${tmp}/offline-pin.env"
 sed \
   -e "s/^JANKURAI_REV=.*/JANKURAI_REV=\"${offline_rev}\"/" \
