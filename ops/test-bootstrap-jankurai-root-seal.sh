@@ -40,12 +40,12 @@ git init -q --bare "$remote"
 git -C "$repo" init -q
 git -C "$repo" config user.name 'Bootstrap Test'
 git -C "$repo" config user.email bootstrap-test@example.invalid
-git -C "$repo" checkout -q -b codex/jeryu-tool-root-seal-split18-r11-20260801
+git -C "$repo" checkout -q -b codex/jeryu-tool-root-seal-mirror-r12-20260802
 printf 'fixture manifest\n' >"$repo/tool-manifest.toml"
 mkdir -p "$repo/ops" "$repo/generated"
 cp "$source_bootstrap" "$repo/ops/bootstrap-jankurai-root-seal.sh"
 chmod 0755 "$repo/ops/bootstrap-jankurai-root-seal.sh"
-control_ref=refs/heads/codex/jeryu-tool-root-seal-split18-r11-20260801
+control_ref=refs/heads/codex/jeryu-tool-root-seal-mirror-r12-20260802
 
 candidate="$evidence/jankurai"
 cat >"$candidate" <<'CANDIDATE'
@@ -292,7 +292,7 @@ jq -n -S \
   --arg token "$token_file" \
   '{schema_version:"jeryu.jankurai-root-seal-authority/v1",
     bootstrap_sha256:$bootstrap,control_commit:$head,
-    control_ref:"refs/heads/codex/jeryu-tool-root-seal-split18-r11-20260801",
+    control_ref:"refs/heads/codex/jeryu-tool-root-seal-mirror-r12-20260802",
     control_remote:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
     control_tree:$tree,entrypoint_path:$entrypoint,
     expected_predecessor_sha256:$predecessor,pin_path:$pin,
