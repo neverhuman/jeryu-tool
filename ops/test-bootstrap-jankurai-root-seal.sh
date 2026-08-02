@@ -40,12 +40,12 @@ git init -q --bare "$remote"
 git -C "$repo" init -q
 git -C "$repo" config user.name 'Bootstrap Test'
 git -C "$repo" config user.email bootstrap-test@example.invalid
-git -C "$repo" checkout -q -b codex/jeryu-tool-offline-host-ci-r13-20260802
+git -C "$repo" checkout -q -b codex/jeryu-tool-literal-origin-r14-20260802
 printf 'fixture manifest\n' >"$repo/tool-manifest.toml"
 mkdir -p "$repo/ops" "$repo/generated"
 cp "$source_bootstrap" "$repo/ops/bootstrap-jankurai-root-seal.sh"
 chmod 0755 "$repo/ops/bootstrap-jankurai-root-seal.sh"
-control_ref=refs/heads/codex/jeryu-tool-offline-host-ci-r13-20260802
+control_ref=refs/heads/codex/jeryu-tool-literal-origin-r14-20260802
 
 candidate="$evidence/jankurai"
 cat >"$candidate" <<'CANDIDATE'
@@ -292,7 +292,7 @@ jq -n -S \
   --arg token "$token_file" \
   '{schema_version:"jeryu.jankurai-root-seal-authority/v1",
     bootstrap_sha256:$bootstrap,control_commit:$head,
-    control_ref:"refs/heads/codex/jeryu-tool-offline-host-ci-r13-20260802",
+    control_ref:"refs/heads/codex/jeryu-tool-literal-origin-r14-20260802",
     control_remote:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
     control_tree:$tree,entrypoint_path:$entrypoint,
     expected_predecessor_sha256:$predecessor,pin_path:$pin,
@@ -453,6 +453,14 @@ chmod 0600 "$pin_env"
 expect_failure 'writable installed pin helper' \
   'unsafe held installed Jankurai pin' invoke "$request"
 chmod 0400 "$pin_env"
+
+origin_url="$(git -C "$repo" config --local --get remote.origin.url)"
+git -C "$repo" remote set-url origin \
+  http://127.0.0.1:8787/git/jeryu/hostile-tool.git
+expect_failure 'Jeryu Tool literal origin substitution' \
+  'Jeryu Tool origin differs from bootstrap authority' invoke "$request"
+git -C "$repo" remote set-url origin "$origin_url"
+assert_restored
 
 config_substitution_hostile() {
   local label="$1" target="$2" filter="$3" pattern="$4" hostile_request
