@@ -66,19 +66,6 @@ output_parent="$(cd -P "${output_parent}" && pwd)"
 output="${output_parent}/$(basename "${output}")"
 [[ ! -e "${output}" ]] || die "output already exists: ${output}"
 
-docker_bin="/usr/bin/docker"
-[[ -f "${docker_bin}" && ! -L "${docker_bin}" && -x "${docker_bin}" ]] ||
-  die "container engine is not the governed /usr/bin/docker"
-[[ "$(stat -c '%a:%u:%g:%h' "${docker_bin}")" == "755:0:0:1" ]] ||
-  die "container engine custody mismatch"
-actual_image_id="$("${docker_bin}" image inspect --format '{{.Id}}' \
-  "${JANKURAI_BUILDER_IMAGE}")" || die "pinned builder image is unavailable"
-[[ "${actual_image_id}" == "${JANKURAI_BUILDER_IMAGE_ID}" ]] ||
-  die "builder image ID mismatch"
-"${docker_bin}" image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-  "${JANKURAI_BUILDER_IMAGE}" | grep -Fx "${JANKURAI_BUILDER_IMAGE}" >/dev/null ||
-  die "builder image repository digest mismatch"
-
 actual_cargo="$(cargo "+${JANKURAI_RUST_TOOLCHAIN}" --version)"
 [[ "${actual_cargo}" == "${JANKURAI_CARGO_VERSION}" ]] ||
   die "vendor generator mismatch: got ${actual_cargo}"
@@ -98,6 +85,20 @@ if ! CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   tail -n 20 "${scratch}/vendor.log" >&2
   die "closed vendor materialization failed offline"
 fi
+
+docker_bin="/usr/bin/docker"
+[[ -f "${docker_bin}" && ! -L "${docker_bin}" && -x "${docker_bin}" ]] ||
+  die "container engine is not the governed /usr/bin/docker"
+[[ "$(stat -c '%a:%u:%g:%h' "${docker_bin}")" == "755:0:0:1" ]] ||
+  die "container engine custody mismatch"
+actual_image_id="$("${docker_bin}" image inspect --format '{{.Id}}' \
+  "${JANKURAI_BUILDER_IMAGE}")" || die "pinned builder image is unavailable"
+[[ "${actual_image_id}" == "${JANKURAI_BUILDER_IMAGE_ID}" ]] ||
+  die "builder image ID mismatch"
+"${docker_bin}" image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+  "${JANKURAI_BUILDER_IMAGE}" | grep -Fx "${JANKURAI_BUILDER_IMAGE}" >/dev/null ||
+  die "builder image repository digest mismatch"
+
 sed 's#^directory = ".*"$#directory = "/opt/jeryu/vendor"#' \
   "${scratch}/vendor-config.raw" >"${scratch}/cargo-config.toml"
 printf '\n[net]\noffline = true\n' >>"${scratch}/cargo-config.toml"

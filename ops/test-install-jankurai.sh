@@ -438,8 +438,10 @@ if env JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="${offline_root}" \
   fail "offline fetch test unexpectedly succeeded"
 fi
 [[ ! -e "${offline_root}/bin/jankurai" ]] || fail "offline failure installed a target"
-grep -Eqi 'offline|no matching package|failed to download' "${tmp}/offline.log" ||
+grep -Eqi 'offline|no matching package|failed to download' "${tmp}/offline.log" || {
+  cp "${tmp}/offline.log" "${tmp}/failure.log"
   fail "offline refusal did not report an offline dependency failure"
+}
 
 # Interruption before rename leaves the previous binary byte-identical.
 interrupt_root="${tmp}/interrupt"
