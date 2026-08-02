@@ -17,6 +17,7 @@ readonly production_token_file="${production_install_dir}/jeryu-merge-token"
 readonly production_remote="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
 readonly production_splitops_remote="http://127.0.0.1:8787/git/veox/jain-split-ops.git"
 readonly production_predecessor_sha256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
+readonly production_candidate_sha256="9e6b8857a26f6004d4c74e510e13b06d880f2e2ae0c89502698889ed690c5d6c"
 readonly maximum_lifetime_seconds=900
 
 fail() {
@@ -213,7 +214,7 @@ jq -e '
   | select(.bootstrap_sha256 | test("^[0-9a-f]{64}$"))
   | select(.control_commit | test("^[0-9a-f]{40}$"))
   | select(.control_ref
-      == "refs/heads/codex/jeryu-tool-jankurai-split3-root-seal-r16-20260802")
+      == "refs/heads/codex/jeryu-tool-jankurai-split3-production-digest-r17-20260802")
   | select(.control_remote
       == "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git")
   | select(.control_tree | test("^[0-9a-f]{40}$"))
@@ -401,9 +402,8 @@ expected_version="$JERYU_JANKURAI_VERSION"
 [[ "$expected_candidate" =~ ^[0-9a-f]{64}$ ]] ||
   fail 'candidate digest from pin authority is malformed'
 if [[ "$test_mode" == 0 ]]; then
-  [[ "$expected_candidate" == \
-    59f4ec903c75a869de365145432a97bdf574b517ce64ad9613088437a9f37b4b ]] \
-    || fail 'production candidate digest is not the reviewed PR7 candidate'
+  [[ "$expected_candidate" == "$production_candidate_sha256" ]] ||
+    fail 'production candidate digest is not the reviewed split.3 candidate'
 fi
 
 request_path="$1"

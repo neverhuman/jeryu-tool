@@ -5,6 +5,18 @@ umask 077
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_bootstrap="${here}/bootstrap-jankurai-root-seal.sh"
+canonical_pin="${here}/../generated/jankurai-pin.env"
+canonical_candidate="$(
+  sed -n 's/^JANKURAI_BINARY_SHA256="\([0-9a-f]\{64\}\)"$/\1/p' "$canonical_pin"
+)"
+production_candidate="$(
+  sed -n 's/^readonly production_candidate_sha256="\([0-9a-f]\{64\}\)"$/\1/p' \
+    "$source_bootstrap"
+)"
+[[ -n "$canonical_candidate" && "$production_candidate" == "$canonical_candidate" ]] || {
+  printf 'test-bootstrap-jankurai-root-seal: production candidate differs from canonical pin\n' >&2
+  exit 1
+}
 tmp="$(mktemp -d /tmp/test-bootstrap-jankurai-root-seal.XXXXXX)"
 cleanup() {
   rm -rf -- "$tmp"
@@ -40,12 +52,12 @@ git init -q --bare "$remote"
 git -C "$repo" init -q
 git -C "$repo" config user.name 'Bootstrap Test'
 git -C "$repo" config user.email bootstrap-test@example.invalid
-git -C "$repo" checkout -q -b codex/jeryu-tool-jankurai-split3-root-seal-r16-20260802
+git -C "$repo" checkout -q -b codex/jeryu-tool-jankurai-split3-production-digest-r17-20260802
 printf 'fixture manifest\n' >"$repo/tool-manifest.toml"
 mkdir -p "$repo/ops" "$repo/generated"
 cp "$source_bootstrap" "$repo/ops/bootstrap-jankurai-root-seal.sh"
 chmod 0755 "$repo/ops/bootstrap-jankurai-root-seal.sh"
-control_ref=refs/heads/codex/jeryu-tool-jankurai-split3-root-seal-r16-20260802
+control_ref=refs/heads/codex/jeryu-tool-jankurai-split3-production-digest-r17-20260802
 
 candidate="$evidence/jankurai"
 cat >"$candidate" <<'CANDIDATE'
@@ -292,7 +304,7 @@ jq -n -S \
   --arg token "$token_file" \
   '{schema_version:"jeryu.jankurai-root-seal-authority/v1",
     bootstrap_sha256:$bootstrap,control_commit:$head,
-    control_ref:"refs/heads/codex/jeryu-tool-jankurai-split3-root-seal-r16-20260802",
+    control_ref:"refs/heads/codex/jeryu-tool-jankurai-split3-production-digest-r17-20260802",
     control_remote:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
     control_tree:$tree,entrypoint_path:$entrypoint,
     expected_predecessor_sha256:$predecessor,pin_path:$pin,
