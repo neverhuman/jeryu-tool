@@ -400,7 +400,7 @@ pub(crate) fn render_consumer(
         text = replace_ci_bridge_constants(&text, pin, context);
     }
     if name == "jankurai_governance.rs" {
-        text = replace_governance_test_constants(&text, pin, context);
+        return Ok(replace_governance_test_constants(&text, pin, context));
     }
     if name == "test-governed-jankurai.sh" {
         text = replace_hex_on_marked_line(
