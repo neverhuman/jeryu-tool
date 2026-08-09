@@ -58,3 +58,35 @@ checkout-local Git execution is disabled, and the credential is read only from
 an absolute stable mode-0600 owner-held single-link regular file. Authentication
 is supplied only to the fixed `/usr/bin/git`, repository-independent
 local-forge protected-main read, after all local checkout checks have passed.
+
+## Exact-head host isolation
+
+Required CI must run in an automatically removed standalone clone. Never use
+`git worktree`, a copied repository directory, or sibling symlinks. A clone of a
+canonical checkout inherits that checkout's local `main` as `origin/main`; it
+does not inherit the checkout's remote-tracking protected-main ref. Bind the
+disposable clone explicitly to live forge readback before running the gate:
+
+```bash
+repo_path=/home/ubuntu/jain-split/jeryu-split/jeryu-tool
+remote=http://127.0.0.1:8787/git/jeryu/jeryu-tool.git
+head=<full-published-pr-sha>
+protected_main="$(git ls-remote "$remote" refs/heads/main | awk '{print $1}')"
+sandbox="$(mktemp -d /tmp/jeryu-tool-required.XXXXXX)"
+trap 'rm -rf "$sandbox"' EXIT
+
+git clone --no-local --no-checkout "$repo_path" "$sandbox/repo"
+git -C "$sandbox/repo" checkout --detach "$head"
+git -C "$sandbox/repo" remote set-url origin "$remote"
+git -C "$sandbox/repo" cat-file -e "${protected_main}^{commit}"
+git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$protected_main"
+test "$(git -C "$sandbox/repo" rev-parse HEAD)" = "$head"
+test "$(git -C "$sandbox/repo" rev-parse refs/remotes/origin/main)" = "$protected_main"
+test -z "$(git -C "$sandbox/repo" status --porcelain)"
+(cd "$sandbox/repo" && just)
+```
+
+Resolve the protected ref before creating the sandbox and fail closed if the
+canonical source does not already contain that object. Do not silently fall
+back to its local `main`, and do not publish a required check until the exact
+command exits successfully and the cleanup trap removes the sandbox.
