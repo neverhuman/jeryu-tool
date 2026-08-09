@@ -1,9 +1,12 @@
 use crate::pin::Pin;
-use crate::render_rules::{ensure_script, regex, render_consumer, require_function};
+use crate::render_rules::{
+    ManifestAuthority, RenderContext, ensure_script, regex, render_consumer, require_function,
+    sandbox_receipt,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -12,6 +15,7 @@ use std::process::{Command, Stdio};
 const CANONICAL_FAMILY_ROOT: &str = "/home/ubuntu/jain-split/jeryu-split";
 const DEFAULT_TOKEN_FILE: &str = "/home/ubuntu/.jeryu/secrets/merge-token";
 const GIT_BIN: &str = "/usr/bin/git";
+const SHA256_BIN: &str = "/usr/bin/sha256sum";
 const CANONICAL_REPOS: [&str; 11] = [
     "jeryu",
     "jeryu-cache",
@@ -248,7 +252,86 @@ fn remote_main(name: &str, expected_origin: &str) -> Result<String, String> {
             "renderer could not resolve protected main for {name}"
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    let line = String::from_utf8_lossy(&output.stdout);
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    if fields.len() != 2
+        || fields[1] != "refs/heads/main"
+        || !regex("^[0-9a-f]{40}$").is_match(fields[0])
+    {
+        return Err(format!(
+            "renderer could not resolve protected main for {name}"
+        ));
+    }
+    Ok(fields[0].to_owned())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+    let mut child = Command::new(SHA256_BIN)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("renderer could not start SHA-256 verifier: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "renderer SHA-256 verifier has no input pipe".to_owned())?
+        .write_all(bytes)
+        .map_err(|error| format!("renderer could not stream SHA-256 input: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("renderer SHA-256 verifier failed: {error}"))?;
+    if !output.status.success() {
+        return Err("renderer SHA-256 verifier failed".to_owned());
+    }
+    let digest = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    if !regex("^[0-9a-f]{64}$").is_match(&digest) {
+        return Err("renderer SHA-256 verifier returned malformed output".to_owned());
+    }
+    Ok(digest)
+}
+
+fn manifest_authority(tool_root: &Path, authenticated: bool) -> Result<ManifestAuthority, String> {
+    let expected_origin = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
+    let origin = git_local_output(tool_root, &["remote", "get-url", "origin"])?;
+    if origin != expected_origin {
+        return Err(format!(
+            "renderer tool source has non-canonical origin: {origin}; expected {expected_origin}"
+        ));
+    }
+    let commit = if authenticated {
+        remote_main("jeryu-tool", expected_origin)?
+    } else {
+        let commit = git_local_output(tool_root, &["rev-parse", "refs/remotes/origin/main"])?;
+        if !regex("^[0-9a-f]{40}$").is_match(&commit) {
+            return Err("renderer could not resolve tracked protected jeryu-tool main".to_owned());
+        }
+        commit
+    };
+    let manifest = fs::read(tool_root.join("tool-manifest.toml"))
+        .map_err(|error| format!("failed to read tool-manifest.toml: {error}"))?;
+    let object = format!("{commit}:tool-manifest.toml");
+    let protected_manifest = git_local_output_bytes(tool_root, &["show", &object])?;
+    if manifest != protected_manifest {
+        return Err(
+            "tool-manifest.toml must land on protected jeryu-tool main before sandbox receipt rendering"
+                .to_owned(),
+        );
+    }
+    let tree_object = format!("{commit}^{{tree}}");
+    let tree = git_local_output(tool_root, &["rev-parse", &tree_object])?;
+    if !regex("^[0-9a-f]{40}$").is_match(&tree) {
+        return Err("renderer resolved malformed jeryu-tool manifest tree".to_owned());
+    }
+    Ok(ManifestAuthority {
+        commit,
+        tree,
+        sha256: sha256_bytes(&protected_manifest)?,
+    })
 }
 
 fn validate_repository_storage(root: &Path) -> Result<(), String> {
@@ -485,19 +568,10 @@ fn validate_write_root(
             "renderer write root HEAD mismatch: {name} expected={expected_head} actual={head}"
         ));
     }
-    let remote_line = remote_main(name, &expected_origin)?;
-    let fields: Vec<&str> = remote_line.split_whitespace().collect();
-    if fields.len() != 2
-        || fields[1] != "refs/heads/main"
-        || !regex("^[0-9a-f]{40}$").is_match(fields[0])
-    {
-        return Err(format!(
-            "renderer could not resolve protected main for {name}"
-        ));
-    }
+    let protected_main = remote_main(name, &expected_origin)?;
     let mut ancestry = local_git_command(root);
     let status = ancestry
-        .args(["merge-base", "--is-ancestor", fields[0], &head])
+        .args(["merge-base", "--is-ancestor", &protected_main, &head])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -505,12 +579,12 @@ fn validate_write_root(
     if !status.success() {
         return Err(format!(
             "renderer write root is not based on current protected main: {name} main={} head={head}",
-            fields[0]
+            protected_main
         ));
     }
     if !git_local_output(
         root,
-        &["rev-list", "--merges", &format!("{}..{head}", fields[0])],
+        &["rev-list", "--merges", &format!("{protected_main}..{head}")],
     )?
     .is_empty()
     {
@@ -549,10 +623,14 @@ fn consumer_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
         "agent/native-cli-manifest.toml",
         "images/agent-sandbox/Dockerfile",
         "images/agent-sandbox/README.md",
+        "images/agent-sandbox/jankurai-installation-receipt.json",
         "ops/agent-sandbox/smoke.sh",
+        "ops/ci/test-governed-jankurai.sh",
         "scripts/ci-doctor.sh",
         "crates/jeryu-api/src/ci_bridge.rs",
+        "crates/jeryu-api/tests/jankurai_governance.rs",
         "crates/jeryu-repogate/tests/ci_lanes.rs",
+        "docs/release.md",
         "docs/testing.md",
         "docs/audit-rules.md",
         "policy/default-audit-policy.toml",
@@ -742,6 +820,13 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
         validate_write_targets(&repository_targets)?;
     }
 
+    let authority = manifest_authority(tool_root, !args.check)?;
+    let receipt = sandbox_receipt(&pin, &authority)?;
+    let context = RenderContext {
+        authority,
+        image_receipt_sha256: sha256_bytes(receipt.as_bytes())?,
+    };
+
     let mut changed = Vec::new();
     let mut rendered_changes = Vec::new();
     if repo_set.contains("jeryu-tool") {
@@ -761,7 +846,7 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
             }
             let original = fs::read_to_string(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-            let rendered = render_consumer(path, &pin, &function)?;
+            let rendered = render_consumer(path, &pin, &function, &context)?;
             if rendered != original {
                 changed.push(path.clone());
                 if !args.check {
@@ -870,6 +955,10 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
         assert!(rendered.contains(pin.get("version")));
         assert!(rendered.contains(pin.get("tag")));
         assert!(rendered.contains(pin.get("repo")));
+        assert_eq!(
+            sha256_bytes(b"abc").expect("SHA-256"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[cfg(unix)]

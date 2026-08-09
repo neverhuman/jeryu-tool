@@ -7,6 +7,95 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+const MANIFEST_REPO: &str = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
+const SANDBOX_JANKURAI_PATH: &str = "/opt/rust/cargo/bin/jankurai";
+const SANDBOX_RECEIPT_ROOT: &str = "/opt/jeryu/receipts/jankurai/sha256";
+
+#[derive(Debug, Clone)]
+pub(crate) struct ManifestAuthority {
+    pub commit: String,
+    pub tree: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RenderContext {
+    pub authority: ManifestAuthority,
+    pub image_receipt_sha256: String,
+}
+
+pub(crate) fn sandbox_receipt(pin: &Pin, authority: &ManifestAuthority) -> Result<String, String> {
+    let receipt = serde_json::json!({
+        "binary": {
+            "sha256": pin.get("binary_sha256"),
+            "version_output": pin.get("version"),
+        },
+        "build": {
+            "builder_image": pin.get("builder_image"),
+            "builder_image_id": pin.get("builder_image_id"),
+            "capabilities_dropped": true,
+            "cargo": pin.get("cargo_version"),
+            "cargo_config_sha256": pin.get("cargo_config_sha256"),
+            "cargo_net_offline": true,
+            "closed_vendor": true,
+            "command": pin.get("build_command"),
+            "container_engine_path": "/usr/bin/docker",
+            "context_sha256": pin.get("build_context_sha256"),
+            "environment": pin.get("build_environment"),
+            "git_global_config_disabled": true,
+            "git_http_follow_redirects": false,
+            "git_system_config_disabled": true,
+            "git_terminal_prompt": false,
+            "glibc": pin.get("glibc_version"),
+            "jankurai_update_check": false,
+            "linker": pin.get("linker_version"),
+            "mode": pin.get("build_mode"),
+            "network_none": true,
+            "network_scope": "local-forge-source-plus-closed-vendor-network-none",
+            "no_new_privileges": true,
+            "no_proxy": "127.0.0.1,localhost,::1",
+            "non_root": true,
+            "package_path": pin.get("package_path"),
+            "read_only_root": true,
+            "rustc": pin.get("rustc_version"),
+            "rustflags": pin.get("rustflags"),
+            "target_triple": pin.get("target_triple"),
+            "vendor_file_count": pin.get("vendor_file_count"),
+            "vendor_files_sha256": pin.get("vendor_files_sha256"),
+        },
+        "conclusion": "success",
+        "governance": {
+            "manifest_commit": authority.commit,
+            "manifest_repo": MANIFEST_REPO,
+            "manifest_sha256": authority.sha256,
+            "manifest_tree": authority.tree,
+            "protected_main": true,
+            "protection_policy": "immutable-main-v1",
+            "status": "governed",
+        },
+        "installation": {
+            "atomic": true,
+            "path": SANDBOX_JANKURAI_PATH,
+        },
+        "operator": "jeryu-agent-sandbox-build",
+        "run_id": format!("agent-sandbox-jankurai-{}", pin.get("semver")),
+        "schema": "jeryu.jankurai-installation/v2",
+        "source": {
+            "archive_sha256": pin.get("source_archive_sha256"),
+            "cargo_lock_sha256": pin.get("cargo_lock_sha256"),
+            "commit": pin.get("rev"),
+            "remote": pin.get("repo"),
+            "tag": pin.get("tag"),
+            "tree": pin.get("source_tree"),
+            "verification": "release-authoritative",
+        },
+        "test_mode": false,
+    });
+    serde_json::to_string_pretty(&receipt)
+        .map(|text| format!("{text}\n"))
+        .map_err(|error| format!("failed to render sandbox Jankurai receipt: {error}"))
+}
+
 pub(crate) fn require_function(tool_root: &Path) -> Result<String, String> {
     let path = tool_root.join("ops/render-assets/require-jankurai.sh");
     let text = fs::read_to_string(&path)
@@ -171,7 +260,104 @@ ops/ci/lib.sh\n          require_jankurai\n{}",
     )
 }
 
-pub(crate) fn render_consumer(path: &Path, pin: &Pin, function: &str) -> Result<String, String> {
+fn replace_rust_string_constant(text: &str, name: &str, value: &str) -> String {
+    let pattern = regex(&format!(
+        r#"(?ms)(const {}: &str\s*=\s*)"[^"]*"(\s*;)"#,
+        regex::escape(name)
+    ));
+    let encoded = serde_json::to_string(value).expect("validated identity string");
+    pattern
+        .replace_all(text, |captures: &Captures<'_>| {
+            format!("{}{}{}", &captures[1], encoded, &captures[2])
+        })
+        .into_owned()
+}
+
+fn replace_hex_on_marked_line(text: &str, marker: &str, width: usize, value: &str) -> String {
+    let line = regex(&format!(r"(?m)^.*{}.*$", regex::escape(marker)));
+    let digest = regex(&format!(r"[0-9a-f]{{{width}}}"));
+    line.replace_all(text, |captures: &Captures<'_>| {
+        digest.replace(&captures[0], value).into_owned()
+    })
+    .into_owned()
+}
+
+fn replace_receipt_path(text: &str, receipt_sha256: &str) -> String {
+    regex(r"/opt/jeryu/receipts/jankurai/sha256/[0-9a-f]{64}\.json")
+        .replace_all(
+            text,
+            format!("{SANDBOX_RECEIPT_ROOT}/{receipt_sha256}.json"),
+        )
+        .into_owned()
+}
+
+fn replace_ci_bridge_constants(text: &str, pin: &Pin, context: &RenderContext) -> String {
+    let mut rendered = text.to_owned();
+    for (name, key) in [
+        ("GOVERNED_JANKURAI_VERSION", "version"),
+        ("GOVERNED_JANKURAI_SHA256", "binary_sha256"),
+        ("GOVERNED_JANKURAI_SOURCE_REPO", "repo"),
+        ("GOVERNED_JANKURAI_SOURCE_TAG", "tag"),
+        ("GOVERNED_JANKURAI_SOURCE_REV", "rev"),
+        ("GOVERNED_JANKURAI_SOURCE_TREE", "source_tree"),
+        (
+            "GOVERNED_JANKURAI_SOURCE_ARCHIVE_SHA256",
+            "source_archive_sha256",
+        ),
+        ("GOVERNED_JANKURAI_CARGO_LOCK_SHA256", "cargo_lock_sha256"),
+        ("GOVERNED_JANKURAI_RUSTC_VERSION", "rustc_version"),
+        ("GOVERNED_JANKURAI_CARGO_VERSION", "cargo_version"),
+        ("GOVERNED_JANKURAI_TARGET_TRIPLE", "target_triple"),
+        ("GOVERNED_JANKURAI_BUILD_MODE", "build_mode"),
+    ] {
+        rendered = replace_rust_string_constant(&rendered, name, pin.get(key));
+    }
+    for (name, value) in [
+        (
+            "GOVERNED_JANKURAI_MANIFEST_COMMIT",
+            context.authority.commit.as_str(),
+        ),
+        (
+            "GOVERNED_JANKURAI_MANIFEST_TREE",
+            context.authority.tree.as_str(),
+        ),
+        (
+            "GOVERNED_JANKURAI_MANIFEST_SHA256",
+            context.authority.sha256.as_str(),
+        ),
+    ] {
+        rendered = replace_rust_string_constant(&rendered, name, value);
+    }
+    rendered
+}
+
+fn replace_governance_test_constants(text: &str, pin: &Pin, context: &RenderContext) -> String {
+    let mut rendered = text.to_owned();
+    for (name, value) in [
+        ("TAG", pin.get("tag")),
+        ("REV", pin.get("rev")),
+        ("TREE", pin.get("source_tree")),
+        ("ARCHIVE_SHA256", pin.get("source_archive_sha256")),
+        ("BINARY_SHA256", pin.get("binary_sha256")),
+        ("MANIFEST_COMMIT", context.authority.commit.as_str()),
+        ("MANIFEST_TREE", context.authority.tree.as_str()),
+        ("MANIFEST_SHA256", context.authority.sha256.as_str()),
+        (
+            "IMAGE_RECEIPT_SHA256",
+            context.image_receipt_sha256.as_str(),
+        ),
+    ] {
+        rendered = replace_rust_string_constant(&rendered, name, value);
+    }
+    rendered
+}
+
+pub(crate) fn render_consumer(
+    path: &Path,
+    pin: &Pin,
+    function: &str,
+    context: &RenderContext,
+) -> Result<String, String> {
     let mut text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let rel = path.to_string_lossy();
@@ -179,6 +365,9 @@ pub(crate) fn render_consumer(path: &Path, pin: &Pin, function: &str) -> Result<
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("");
+    if name == "jankurai-installation-receipt.json" && rel.contains("agent-sandbox") {
+        return sandbox_receipt(pin, &context.authority);
+    }
     if name == "ensure-jankurai.sh" {
         return Ok(ensure_script(pin, function));
     }
@@ -207,6 +396,35 @@ pub(crate) fn render_consumer(path: &Path, pin: &Pin, function: &str) -> Result<
     if name == "ci_bridge.rs" {
         text = regex(r#"(required_tool_version\s*=\s*\\?")[^"\\]*(\\?")"#)
             .replace_all(&text, format!("${{1}}{}${{2}}", pin.get("semver")))
+            .into_owned();
+        text = replace_ci_bridge_constants(&text, pin, context);
+    }
+    if name == "jankurai_governance.rs" {
+        text = replace_governance_test_constants(&text, pin, context);
+    }
+    if name == "test-governed-jankurai.sh" {
+        text = replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_commit",
+            40,
+            &context.authority.commit,
+        );
+        text = replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_tree",
+            40,
+            &context.authority.tree,
+        );
+        text = replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_sha256",
+            64,
+            &context.authority.sha256,
+        );
+    }
+    if name == "release.md" {
+        text = regex(r"(?ms)(match SHA-256\s*`)[0-9a-f]{64}(`)")
+            .replace_all(&text, format!("${{1}}{}${{2}}", pin.get("binary_sha256")))
             .into_owned();
     }
     if name.ends_with(".yml") && rel.contains("/workflows/") && text.contains("JANKURAI_") {
@@ -247,6 +465,12 @@ pub(crate) fn render_consumer(path: &Path, pin: &Pin, function: &str) -> Result<
         text = regex(r"pinned \d+\.\d+\.\d+")
             .replace_all(&text, format!("pinned {}", pin.get("semver")))
             .into_owned();
+        text = replace_hex_on_marked_line(
+            &text,
+            "sha256sum /opt/rust/cargo/bin/jankurai",
+            64,
+            pin.get("binary_sha256"),
+        );
     }
     if name == "pr-ci.sh" {
         text = regex(r"(?ms)^# The pinned jankurai .*?^export PATH=.*?\n")
@@ -299,5 +523,57 @@ fi\n\n";
             1,
         );
     }
+    text = replace_receipt_path(&text, &context.image_receipt_sha256);
     Ok(semantic_identity_rules(&text, pin))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_context() -> RenderContext {
+        RenderContext {
+            authority: ManifestAuthority {
+                commit: "a".repeat(40),
+                tree: "b".repeat(40),
+                sha256: "c".repeat(64),
+            },
+            image_receipt_sha256: "d".repeat(64),
+        }
+    }
+
+    #[test]
+    fn sandbox_receipt_is_v2_path_and_authority_bound() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin = Pin::load(&root).expect("canonical pin");
+        let context = fixture_context();
+        let text = sandbox_receipt(&pin, &context.authority).expect("receipt");
+        let receipt: serde_json::Value = serde_json::from_str(&text).expect("receipt JSON");
+        assert_eq!(receipt["schema"], "jeryu.jankurai-installation/v2");
+        assert_eq!(receipt["binary"]["sha256"], pin.get("binary_sha256"));
+        assert_eq!(receipt["build"]["mode"], pin.get("build_mode"));
+        assert_eq!(receipt["installation"]["path"], SANDBOX_JANKURAI_PATH);
+        assert_eq!(receipt["governance"]["manifest_commit"], "a".repeat(40));
+        assert_eq!(receipt["test_mode"], false);
+    }
+
+    #[test]
+    fn targeted_constants_and_receipt_paths_are_replaced() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin = Pin::load(&root).expect("canonical pin");
+        let context = fixture_context();
+        let rust = "const TAG: &str = \"old\";\nconst IMAGE_RECEIPT_SHA256: &str =\n    \"old\";\n";
+        let rendered = replace_governance_test_constants(rust, &pin, &context);
+        assert!(rendered.contains(pin.get("tag")));
+        assert!(rendered.contains(&context.image_receipt_sha256));
+
+        let path = format!("{SANDBOX_RECEIPT_ROOT}/{}.json", "0".repeat(64));
+        assert_eq!(
+            replace_receipt_path(&path, &context.image_receipt_sha256),
+            format!(
+                "{SANDBOX_RECEIPT_ROOT}/{}.json",
+                context.image_receipt_sha256
+            )
+        );
+    }
 }
