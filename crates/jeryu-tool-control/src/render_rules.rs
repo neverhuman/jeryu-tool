@@ -368,6 +368,26 @@ pub(crate) fn render_consumer(
     if name == "jankurai-installation-receipt.json" && rel.contains("agent-sandbox") {
         return sandbox_receipt(pin, &context.authority);
     }
+    if name == "test-governed-jankurai.sh" {
+        text = replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_commit",
+            40,
+            &context.authority.commit,
+        );
+        text = replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_tree",
+            40,
+            &context.authority.tree,
+        );
+        return Ok(replace_hex_on_marked_line(
+            &text,
+            ".governance.manifest_sha256",
+            64,
+            &context.authority.sha256,
+        ));
+    }
     if name == "ensure-jankurai.sh" {
         return Ok(ensure_script(pin, function));
     }
@@ -401,26 +421,6 @@ pub(crate) fn render_consumer(
     }
     if name == "jankurai_governance.rs" {
         return Ok(replace_governance_test_constants(&text, pin, context));
-    }
-    if name == "test-governed-jankurai.sh" {
-        text = replace_hex_on_marked_line(
-            &text,
-            ".governance.manifest_commit",
-            40,
-            &context.authority.commit,
-        );
-        text = replace_hex_on_marked_line(
-            &text,
-            ".governance.manifest_tree",
-            40,
-            &context.authority.tree,
-        );
-        text = replace_hex_on_marked_line(
-            &text,
-            ".governance.manifest_sha256",
-            64,
-            &context.authority.sha256,
-        );
     }
     if name == "release.md" {
         text = regex(r"(?ms)(match SHA-256\s*`)[0-9a-f]{64}(`)")
