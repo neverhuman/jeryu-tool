@@ -3,8 +3,9 @@
 This is the **tool control plane** for the Jeryu split family: the jankurai
 audit toolchain **and** the reusable-code-tool registry.
 
-Before editing, read `README.md`, `tool-manifest.toml`, and (for the registry)
-`docs/tools-registry.md`.
+Before editing, read `README.md`, `tool-manifest.toml`, `docs/architecture.md`,
+and `docs/testing.md`. Read `docs/release.md` for authority promotion and
+rollback work, and `docs/tools-registry.md` for registry work.
 
 `tool-manifest.toml` is the single source of truth for the jankurai toolchain.
 Never hardcode a jankurai rev/tag/version anywhere in the family — change it here

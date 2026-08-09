@@ -32,9 +32,11 @@ variants to one typed repair record. Every failure prints non-empty `purpose`,
 `reason`, `common_fixes`, `docs_url`, and `repair_hint` fields after the exact
 source error. `common_fixes` is a pipe-delimited closed list, `docs_url` points
 to repository-local guidance, and `repair_hint` names the command or lane to
-rerun. `every_control_error_has_closed_agent_repair_guidance` proves the
-contract exhaustively; `registry_check_and_closed_arguments` proves the
-rendered failure at the process boundary.
+rerun. In human-readable output, `common_fixes` is the "common fixes" list;
+the spelling difference is serialization only, not a second error contract.
+`every_control_error_has_closed_agent_repair_guidance` proves the contract
+exhaustively; `registry_check_and_closed_arguments` proves the rendered failure
+at the process boundary.
 
 Rerun the focused regression with:
 
