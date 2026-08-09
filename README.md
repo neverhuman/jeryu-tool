@@ -3,6 +3,8 @@
 [![Jankurai score: 65+](https://img.shields.io/badge/Jankurai-65%2B-brightgreen)](agent/audit-policy.toml)
 
 Agent and contributor orientation starts at [AGENTS.md](AGENTS.md).
+The durable operating contracts are [architecture](docs/architecture.md),
+[release](docs/release.md), and [testing](docs/testing.md).
 
 The **tool control plane** for the jeryu family. One repo, two jobs, no product
 code:
