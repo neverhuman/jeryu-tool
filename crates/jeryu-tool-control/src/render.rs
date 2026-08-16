@@ -223,6 +223,82 @@ fn read_forge_token() -> Result<String, String> {
     read_token_file_with_hook(&path, || {})
 }
 
+fn git_remote_url(root: &Path, name: &str) -> Result<Option<String>, String> {
+    let mut command = local_git_command(root);
+    command.args(["remote", "get-url", name]);
+    let output = command.output().map_err(|error| {
+        format!(
+            "renderer custody check failed for {}: {error}",
+            root.display()
+        )
+    })?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("No such remote") {
+        Ok(None)
+    } else {
+        Err(format!(
+            "renderer custody check failed for {}: {}",
+            root.display(),
+            stderr.trim()
+        ))
+    }
+}
+
+fn protected_main_commit(
+    tool_root: &Path,
+    name: &str,
+    expected_origin: &str,
+    authenticated: bool,
+) -> Result<String, String> {
+    if let Some(origin) = git_remote_url(tool_root, "origin")? {
+        if origin != expected_origin {
+            return Err(format!(
+                "renderer tool source has non-canonical origin: {origin}; expected {expected_origin}"
+            ));
+        }
+        if authenticated {
+            return remote_main(name, expected_origin);
+        }
+        let commit = git_local_output(tool_root, &["rev-parse", "refs/remotes/origin/main"])?;
+        if !regex("^[0-9a-f]{40}$").is_match(&commit) {
+            return Err("renderer could not resolve tracked protected jeryu-tool main".to_owned());
+        }
+        return Ok(commit);
+    }
+
+    if let Ok(base) = env::var("JAIN_CONTRACT_BASE_REF") {
+        if !regex("^[0-9a-f]{40}$").is_match(&base) {
+            return Err(format!(
+                "harness JAIN_CONTRACT_BASE_REF is not a full commit sha: {base}"
+            ));
+        }
+        git_local_output(tool_root, &["cat-file", "-e", &format!("{base}^{{commit}}")])?;
+        return Ok(base);
+    }
+
+    if authenticated {
+        return remote_main(name, expected_origin);
+    }
+
+    if env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1") {
+        return Err(
+            "release renderer custody requires harness-authenticated JAIN_CONTRACT_BASE_REF \
+when origin is absent"
+                .to_owned(),
+        );
+    }
+
+    Err(format!(
+        "renderer custody check failed for {}: no origin remote and no JAIN_CONTRACT_BASE_REF",
+        tool_root.display()
+    ))
+}
+
 fn remote_main(name: &str, expected_origin: &str) -> Result<String, String> {
     let token = read_forge_token()?;
     let mut command = Command::new(GIT_BIN);
@@ -297,21 +373,7 @@ fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
 
 fn manifest_authority(tool_root: &Path, authenticated: bool) -> Result<ManifestAuthority, String> {
     let expected_origin = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
-    let origin = git_local_output(tool_root, &["remote", "get-url", "origin"])?;
-    if origin != expected_origin {
-        return Err(format!(
-            "renderer tool source has non-canonical origin: {origin}; expected {expected_origin}"
-        ));
-    }
-    let commit = if authenticated {
-        remote_main("jeryu-tool", expected_origin)?
-    } else {
-        let commit = git_local_output(tool_root, &["rev-parse", "refs/remotes/origin/main"])?;
-        if !regex("^[0-9a-f]{40}$").is_match(&commit) {
-            return Err("renderer could not resolve tracked protected jeryu-tool main".to_owned());
-        }
-        commit
-    };
+    let commit = protected_main_commit(tool_root, "jeryu-tool", expected_origin, authenticated)?;
     let manifest = fs::read(tool_root.join("tool-manifest.toml"))
         .map_err(|error| format!("failed to read tool-manifest.toml: {error}"))?;
     let object = format!("{commit}:tool-manifest.toml");
@@ -959,6 +1021,57 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
             sha256_bytes(b"abc").expect("SHA-256"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_main_commit_accepts_harness_contract_base_without_origin() {
+        let root = test_root("contract-base");
+        run_fixture_git(&root, &["init", "-q"]);
+        run_fixture_git(&root, &["config", "user.name", "Jeryu Test"]);
+        run_fixture_git(&root, &["config", "user.email", "jeryu-test@invalid"]);
+        fs::write(root.join("marker.txt"), "fixture\n").expect("write fixture");
+        run_fixture_git(&root, &["add", "marker.txt"]);
+        run_fixture_git(&root, &["commit", "-q", "-m", "fixture"]);
+        let head = git_local_output(&root, &["rev-parse", "HEAD"]).expect("head");
+        // SAFETY: test-only env mutation in an isolated process.
+        unsafe {
+            env::set_var("JAIN_CONTRACT_BASE_REF", &head);
+        }
+        let resolved = protected_main_commit(
+            &root,
+            "jeryu-tool",
+            "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+            false,
+        )
+        .expect("harness contract base");
+        assert_eq!(resolved, head);
+        unsafe {
+            env::remove_var("JAIN_CONTRACT_BASE_REF");
+        }
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_main_commit_rejects_release_without_contract_base_or_origin() {
+        let root = test_root("release-no-base");
+        run_fixture_git(&root, &["init", "-q"]);
+        unsafe {
+            env::set_var("JAIN_RELEASE_CI", "1");
+        }
+        let error = protected_main_commit(
+            &root,
+            "jeryu-tool",
+            "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+            false,
+        )
+        .expect_err("release without origin must fail closed");
+        assert!(error.contains("JAIN_CONTRACT_BASE_REF"));
+        unsafe {
+            env::remove_var("JAIN_RELEASE_CI");
+        }
+        fs::remove_dir_all(root).expect("remove test root");
     }
 
     #[cfg(unix)]
