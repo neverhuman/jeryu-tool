@@ -277,7 +277,10 @@ fn protected_main_commit(
                 "harness JAIN_CONTRACT_BASE_REF is not a full commit sha: {base}"
             ));
         }
-        git_local_output(tool_root, &["cat-file", "-e", &format!("{base}^{{commit}}")])?;
+        git_local_output(
+            tool_root,
+            &["cat-file", "-e", &format!("{base}^{{commit}}")],
+        )?;
         return Ok(base);
     }
 
