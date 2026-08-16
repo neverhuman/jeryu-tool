@@ -254,6 +254,8 @@ fn protected_main_commit(
     name: &str,
     expected_origin: &str,
     authenticated: bool,
+    contract_base_ref: Option<&str>,
+    release_ci: bool,
 ) -> Result<String, String> {
     if let Some(origin) = git_remote_url(tool_root, "origin")? {
         if origin != expected_origin {
@@ -271,8 +273,8 @@ fn protected_main_commit(
         return Ok(commit);
     }
 
-    if let Ok(base) = env::var("JAIN_CONTRACT_BASE_REF") {
-        if !regex("^[0-9a-f]{40}$").is_match(&base) {
+    if let Some(base) = contract_base_ref {
+        if !regex("^[0-9a-f]{40}$").is_match(base) {
             return Err(format!(
                 "harness JAIN_CONTRACT_BASE_REF is not a full commit sha: {base}"
             ));
@@ -281,14 +283,14 @@ fn protected_main_commit(
             tool_root,
             &["cat-file", "-e", &format!("{base}^{{commit}}")],
         )?;
-        return Ok(base);
+        return Ok(base.to_owned());
     }
 
     if authenticated {
         return remote_main(name, expected_origin);
     }
 
-    if env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1") {
+    if release_ci {
         return Err(
             "release renderer custody requires harness-authenticated JAIN_CONTRACT_BASE_REF \
 when origin is absent"
@@ -376,7 +378,16 @@ fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
 
 fn manifest_authority(tool_root: &Path, authenticated: bool) -> Result<ManifestAuthority, String> {
     let expected_origin = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
-    let commit = protected_main_commit(tool_root, "jeryu-tool", expected_origin, authenticated)?;
+    let contract_base_ref = env::var("JAIN_CONTRACT_BASE_REF").ok();
+    let release_ci = env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1");
+    let commit = protected_main_commit(
+        tool_root,
+        "jeryu-tool",
+        expected_origin,
+        authenticated,
+        contract_base_ref.as_deref(),
+        release_ci,
+    )?;
     let manifest = fs::read(tool_root.join("tool-manifest.toml"))
         .map_err(|error| format!("failed to read tool-manifest.toml: {error}"))?;
     let object = format!("{commit}:tool-manifest.toml");
@@ -1037,21 +1048,16 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
         run_fixture_git(&root, &["add", "marker.txt"]);
         run_fixture_git(&root, &["commit", "-q", "-m", "fixture"]);
         let head = git_local_output(&root, &["rev-parse", "HEAD"]).expect("head");
-        // SAFETY: test-only env mutation in an isolated process.
-        unsafe {
-            env::set_var("JAIN_CONTRACT_BASE_REF", &head);
-        }
         let resolved = protected_main_commit(
             &root,
             "jeryu-tool",
             "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
             false,
+            Some(&head),
+            false,
         )
         .expect("harness contract base");
         assert_eq!(resolved, head);
-        unsafe {
-            env::remove_var("JAIN_CONTRACT_BASE_REF");
-        }
         fs::remove_dir_all(root).expect("remove test root");
     }
 
@@ -1060,20 +1066,16 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
     fn protected_main_commit_rejects_release_without_contract_base_or_origin() {
         let root = test_root("release-no-base");
         run_fixture_git(&root, &["init", "-q"]);
-        unsafe {
-            env::set_var("JAIN_RELEASE_CI", "1");
-        }
         let error = protected_main_commit(
             &root,
             "jeryu-tool",
             "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
             false,
+            None,
+            true,
         )
         .expect_err("release without origin must fail closed");
         assert!(error.contains("JAIN_CONTRACT_BASE_REF"));
-        unsafe {
-            env::remove_var("JAIN_RELEASE_CI");
-        }
         fs::remove_dir_all(root).expect("remove test root");
     }
 
