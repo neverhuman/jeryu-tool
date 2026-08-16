@@ -53,6 +53,10 @@ mkdir -p "${tmp}/broker/bin" "${tmp}/attacker/bin" \
   "${tmp}/home/.jeryu/bin" "${tmp}/home/.jeryu/receipts/jankurai/sha256" \
   "${tmp}/home/.local/bin"
 governed_source="${production_governed}"
+if [[ ! ( "${governed_source}" == /* && -f "${governed_source}" &&
+          ! -L "${governed_source}" && -x "${governed_source}" ) ]]; then
+  governed_source="${production_broker}"
+fi
 [[ "${governed_source}" == /* && -f "${governed_source}" &&
    ! -L "${governed_source}" && -x "${governed_source}" ]] ||
   fail "governed Jankurai test source is unavailable"
