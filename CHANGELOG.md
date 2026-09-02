@@ -19,6 +19,9 @@
 - Bound consumer `jankurai()` wrappers to the exact executable selected by the
   receipt verifier, and reject ambiguous or alternate execution shapes instead
   of validating one binary and running another.
+- Resolve executable files independently of shell functions, so a generated
+  `jankurai()` wrapper cannot shadow the authenticated binary while real PATH
+  shadowing remains fail-closed.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

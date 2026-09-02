@@ -9,7 +9,7 @@ require_jankurai() {
   local -a receipt_candidates=()
   if [[ "${JAIN_RELEASE_CI:-0}" == "1" ]]; then
     mode=release-broker
-    resolved="$(command -v jankurai 2>/dev/null || true)"
+    resolved="$(type -P -- jankurai 2>/dev/null || true)"
     if [[ "${resolved}" != "${expected_broker}" ]]; then
       printf 'release broker Jankurai path mismatch: expected %s, resolved %s\n' \
         "${expected_broker}" "${resolved:-missing}" >&2
@@ -37,7 +37,7 @@ require_jankurai() {
   if [[ "${mode}" != "release-broker" ]]; then
     bin_dir="$(dirname "${bin}")"
     export PATH="${bin_dir}:${PATH}"
-    resolved="$(command -v jankurai 2>/dev/null || true)"
+    resolved="$(type -P -- jankurai 2>/dev/null || true)"
     if [[ "${resolved}" != "${bin}" ]]; then
       printf 'governed jankurai shadowed: expected %s, resolved %s\n' \
         "${bin}" "${resolved:-missing}" >&2

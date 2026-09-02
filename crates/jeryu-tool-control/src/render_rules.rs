@@ -700,6 +700,11 @@ mod tests {
 
     #[test]
     fn jankurai_wrapper_executes_only_the_verified_governed_binary() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let function = require_function(&root).expect("governed verifier template");
+        assert_eq!(function.matches("type -P -- jankurai").count(), 2);
+        assert!(!function.contains("command -v jankurai"));
+
         let legacy = r#"readonly JERYU_JANKURAI_BIN="${CARGO_HOME}/bin/jankurai"
 
 jankurai() {
@@ -720,6 +725,70 @@ jankurai() {
         assert_eq!(
             bind_jankurai_wrapper(without_wrapper).expect("consumer has no wrapper"),
             without_wrapper
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_lookup_ignores_the_wrapper_function_but_not_path_files() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "jeryu-tool-wrapper-resolution-{}-{nonce}",
+            std::process::id()
+        ));
+        let governed_dir = root.join("governed");
+        let alternate_dir = root.join("alternate");
+        fs::create_dir_all(&governed_dir).expect("create governed fixture directory");
+        fs::create_dir_all(&alternate_dir).expect("create alternate fixture directory");
+        let governed = governed_dir.join("jankurai");
+        let alternate = alternate_dir.join("jankurai");
+        fs::write(
+            &governed,
+            "#!/usr/bin/env bash\nprintf 'jankurai test 1.0\\n'\n",
+        )
+        .expect("write governed executable");
+        fs::write(
+            &alternate,
+            "#!/usr/bin/env bash\nprintf 'alternate executable\\n'\n",
+        )
+        .expect("write alternate executable");
+        fs::set_permissions(&governed, fs::Permissions::from_mode(0o755))
+            .expect("chmod governed executable");
+        fs::set_permissions(&alternate, fs::Permissions::from_mode(0o755))
+            .expect("chmod alternate executable");
+
+        let probe = r#"set -euo pipefail
+jankurai() { printf 'wrapper function\n'; }
+test "$(command -v jankurai)" = jankurai
+PATH="${ALTERNATE_DIR}:${PATH}"
+bin="${GOVERNED_BIN}"
+bin_dir="$(dirname "${bin}")"
+export PATH="${bin_dir}:${PATH}"
+resolved="$(type -P -- jankurai 2>/dev/null || true)"
+test "${resolved}" = "${bin}"
+test "$("${resolved}" --version)" = 'jankurai test 1.0'
+test "$(sha256sum "${resolved}" | awk '{print $1}')" = \
+  '67e807be848534d864c993ae5192d2526e3c2ca5cb83d7ed18c4b5b2600e1782'
+"#;
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg(probe)
+            .env("GOVERNED_BIN", &governed)
+            .env("ALTERNATE_DIR", &alternate_dir)
+            .output();
+        fs::remove_dir_all(&root).expect("remove wrapper-resolution fixture");
+        let output = output.expect("run wrapper-resolution probe");
+        assert!(
+            output.status.success(),
+            "wrapper-resolution probe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
