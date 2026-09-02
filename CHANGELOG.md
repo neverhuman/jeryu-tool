@@ -16,6 +16,9 @@
 - Made generated shell pin replacement in-place and byte-idempotent, preserving
   authored command order while rejecting ambiguous markers and strict-shell
   setup instead of silently rewriting malformed consumers.
+- Bound consumer `jankurai()` wrappers to the exact executable selected by the
+  receipt verifier, and reject ambiguous or alternate execution shapes instead
+  of validating one binary and running another.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

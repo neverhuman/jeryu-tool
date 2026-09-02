@@ -179,6 +179,46 @@ fn replace_require_function(text: &str, function: &str) -> String {
         .into_owned()
 }
 
+fn bind_jankurai_wrapper(text: &str) -> Result<String, String> {
+    let wrapper_start = regex(r"(?m)^jankurai\(\)[ \t]*\{[ \t]*$");
+    let wrapper_starts: Vec<_> = wrapper_start.find_iter(text).collect();
+    if wrapper_starts.is_empty() {
+        return Ok(text.to_owned());
+    }
+    if wrapper_starts.len() != 1 {
+        return Err(format!(
+            "Jankurai command wrapper must be unique; found {}",
+            wrapper_starts.len()
+        ));
+    }
+
+    let exact_wrapper = regex(
+        r#"(?m)^jankurai\(\)[ \t]*\{[ \t]*\n[ \t]+require_jankurai(?: \|\| return 1)?[ \t]*\n[ \t]+command "\$\{(?P<bin>JERYU_(?:GOVERNED_)?JANKURAI_BIN)\}" "\$@"[ \t]*\n\}[ \t]*$"#,
+    );
+    let captures = exact_wrapper.captures(text).ok_or_else(|| {
+        "Jankurai command wrapper must contain only governed verification and exact-bin execution"
+            .to_owned()
+    })?;
+    let wrapper_count = exact_wrapper.captures_iter(text).count();
+    if wrapper_count != 1 {
+        return Err(format!(
+            "Jankurai command wrapper must have one exact implementation; found {wrapper_count}"
+        ));
+    }
+    let bin = captures
+        .name("bin")
+        .ok_or_else(|| "Jankurai command wrapper is missing its executable binding".to_owned())?;
+    match bin.as_str() {
+        "JERYU_GOVERNED_JANKURAI_BIN" => Ok(text.to_owned()),
+        "JERYU_JANKURAI_BIN" => {
+            let mut rendered = text.to_owned();
+            rendered.replace_range(bin.range(), "JERYU_GOVERNED_JANKURAI_BIN");
+            Ok(rendered)
+        }
+        _ => Err("Jankurai command wrapper uses an unsupported executable binding".to_owned()),
+    }
+}
+
 fn replace_workflow_pin(text: &str, pin: &Pin) -> String {
     let Some(start) = text.find("env:\n") else {
         return text.to_owned();
@@ -415,10 +455,9 @@ pub(crate) fn render_consumer(
         return Ok(ensure_script(pin, function));
     }
     if name == "lib.sh" && rel.contains("/ops/ci/") {
-        return Ok(semantic_identity_rules(
-            &replace_require_function(&replace_pin_block(&text, pin)?, function),
-            pin,
-        ));
+        let rendered = replace_require_function(&replace_pin_block(&text, pin)?, function);
+        let rendered = bind_jankurai_wrapper(&rendered)?;
+        return Ok(semantic_identity_rules(&rendered, pin));
     }
     if path.extension().and_then(|value| value.to_str()) == Some("sh") {
         text = replace_pin_block(&text, pin)?;
@@ -655,6 +694,69 @@ mod tests {
             assert!(
                 replace_pin_block(&input, &pin).is_err(),
                 "accepted {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn jankurai_wrapper_executes_only_the_verified_governed_binary() {
+        let legacy = r#"readonly JERYU_JANKURAI_BIN="${CARGO_HOME}/bin/jankurai"
+
+jankurai() {
+  require_jankurai || return 1
+  command "${JERYU_JANKURAI_BIN}" "$@"
+}
+"#;
+        let rendered = bind_jankurai_wrapper(legacy).expect("bind legacy wrapper");
+        assert!(rendered.contains(r#"readonly JERYU_JANKURAI_BIN="${CARGO_HOME}/bin/jankurai""#));
+        assert!(rendered.contains(r#"command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@""#));
+        assert!(!rendered.contains(r#"command "${JERYU_JANKURAI_BIN}" "$@""#));
+        assert_eq!(
+            bind_jankurai_wrapper(&rendered).expect("canonical wrapper is idempotent"),
+            rendered
+        );
+
+        let without_wrapper = "require_jankurai\necho no-wrapper\n";
+        assert_eq!(
+            bind_jankurai_wrapper(without_wrapper).expect("consumer has no wrapper"),
+            without_wrapper
+        );
+    }
+
+    #[test]
+    fn jankurai_wrapper_rejects_ambiguous_or_unbound_execution() {
+        let malformed = [
+            r#"jankurai() {
+  command jankurai "$@"
+}
+"#
+            .to_owned(),
+            r#"jankurai() {
+  require_jankurai
+  command "${OTHER_JANKURAI_BIN}" "$@"
+}
+"#
+            .to_owned(),
+            r#"jankurai() {
+  require_jankurai
+  echo bypass
+  command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"
+}
+"#
+            .to_owned(),
+            format!(
+                "{wrapper}\n{wrapper}",
+                wrapper = r#"jankurai() {
+  require_jankurai
+  command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"
+}"#
+            ),
+        ];
+
+        for input in malformed {
+            assert!(
+                bind_jankurai_wrapper(&input).is_err(),
+                "accepted ambiguous wrapper {input:?}"
             );
         }
     }
