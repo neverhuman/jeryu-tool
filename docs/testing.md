@@ -62,7 +62,10 @@ is supplied only to the fixed `/usr/bin/git`, repository-independent hosted
 protected-main read, after all local checkout checks have passed.
 `JERYU_FORGE_TOKEN_FILE` is mandatory for authenticated write mode; its value is
 a credential path, and the PAT itself reaches Git only through the
-custody-checked askpass pipe.
+custody-checked askpass pipe. The Git child clears ambient proxy, TLS/CA,
+trace-output, and dynamic-loader overrides, restores only the canonical hosted
+Git address plus loopback in `NO_PROXY`, disables Git proxy use and redirects,
+and explicitly requires platform-CA certificate and hostname verification.
 
 ## Exact-head host isolation
 

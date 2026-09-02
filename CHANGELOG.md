@@ -10,6 +10,9 @@
 - Replaced Bearer-token environment injection with a same-inode askpass path:
   authenticated Git receives PAT bytes only over its credential pipe, and
   hostile origin, prompt, credential-file, and URL variants fail closed.
+- Made the credential-bearing protected-main read independent of ambient proxy,
+  TLS/CA, trace-output, and dynamic-loader overrides, with direct hosted routing,
+  redirects disabled, and platform-CA certificate verification required.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

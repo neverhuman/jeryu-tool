@@ -16,6 +16,96 @@ const CANONICAL_FAMILY_ROOT: &str = "/home/ubuntu/jain-split/jeryu-split";
 const GIT_BIN: &str = "/usr/bin/git";
 const SHA256_BIN: &str = "/usr/bin/sha256sum";
 const HOSTED_JERYU_GIT_BASE: &str = "https://git.neverhuman.org/git/jeryu";
+const DIRECT_HOST_NO_PROXY: &str = "git.neverhuman.org,127.0.0.1,localhost,::1";
+const SCRUBBED_GIT_ENVIRONMENT: &[&str] = &[
+    // Git repository, configuration, transport, and credential overrides.
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_ASKPASS",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_EXEC_PATH",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PROXY_COMMAND",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_WORK_TREE",
+    "SSH_ASKPASS",
+    // Ambient proxies must not redirect the credential-bearing HTTPS request.
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    // TLS identity, verification, and key-log overrides.
+    "CURL_CA_BUNDLE",
+    "CURL_SSL_BACKEND",
+    "GIT_SSL_CAINFO",
+    "GIT_SSL_CAPATH",
+    "GIT_SSL_CERT",
+    "GIT_SSL_CERT_PASSWORD_PROTECTED",
+    "GIT_SSL_CIPHER_LIST",
+    "GIT_SSL_KEY",
+    "GIT_SSL_NO_VERIFY",
+    "GIT_SSL_VERSION",
+    "GNUTLS_CPUID_OVERRIDE",
+    "GNUTLS_DEBUG_LEVEL",
+    "GNUTLS_NO_IMPLICIT_INIT",
+    "GNUTLS_SYSTEM_PRIORITY_FILE",
+    "NSS_SSLKEYLOGFILE",
+    "OPENSSL_CONF",
+    "OPENSSL_CONF_INCLUDE",
+    "OPENSSL_ENGINES",
+    "OPENSSL_MODULES",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "SSLKEYLOGFILE",
+    // Git trace and standard-stream redirection sinks.
+    "GIT_CURL_VERBOSE",
+    "GIT_REDIRECT_STDERR",
+    "GIT_REDIRECT_STDIN",
+    "GIT_REDIRECT_STDOUT",
+    "GIT_TRACE",
+    "GIT_TRACE_CURL",
+    "GIT_TRACE_CURL_NO_DATA",
+    "GIT_TRACE_PACKET",
+    "GIT_TRACE_PACK_ACCESS",
+    "GIT_TRACE_PACKFILE",
+    "GIT_TRACE_PERFORMANCE",
+    "GIT_TRACE_REDACT",
+    "GIT_TRACE_SETUP",
+    "GIT_TRACE_SHALLOW",
+    "GIT_TRACE2",
+    "GIT_TRACE2_BRIEF",
+    "GIT_TRACE2_CONFIG_PARAMS",
+    "GIT_TRACE2_DST_DEBUG",
+    "GIT_TRACE2_ENV_VARS",
+    "GIT_TRACE2_EVENT",
+    "GIT_TRACE2_EVENT_BRIEF",
+    "GIT_TRACE2_EVENT_NESTING",
+    "GIT_TRACE2_MAX_FILES",
+    "GIT_TRACE2_PARENT_NAME",
+    "GIT_TRACE2_PARENT_SID",
+    "GIT_TRACE2_PERF",
+    "GIT_TRACE2_PERF_BRIEF",
+    // Dynamic-loader and locale module injection into the fixed Git binary.
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
+    "LD_AUDIT",
+    "LD_DEBUG",
+    "LD_DEBUG_OUTPUT",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LD_PROFILE",
+    "LD_PROFILE_OUTPUT",
+    "LOCPATH",
+];
 const CANONICAL_REPOS: [&str; 11] = [
     "jeryu",
     "jeryu-cache",
@@ -91,23 +181,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
 }
 
 fn scrub_git_environment(command: &mut Command) {
-    for key in [
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_ASKPASS",
-        "GIT_COMMON_DIR",
-        "GIT_CONFIG",
-        "GIT_CONFIG_COUNT",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_DIR",
-        "GIT_EXEC_PATH",
-        "GIT_EXTERNAL_DIFF",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_PROXY_COMMAND",
-        "GIT_SSH",
-        "GIT_SSH_COMMAND",
-        "GIT_WORK_TREE",
-        "SSH_ASKPASS",
-    ] {
+    for key in SCRUBBED_GIT_ENVIRONMENT {
         command.env_remove(key);
     }
     command
@@ -115,8 +189,8 @@ fn scrub_git_environment(command: &mut Command) {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("NO_PROXY", "127.0.0.1,localhost,::1")
-        .env("no_proxy", "127.0.0.1,localhost,::1");
+        .env("NO_PROXY", DIRECT_HOST_NO_PROXY)
+        .env("no_proxy", DIRECT_HOST_NO_PROXY);
 }
 
 fn local_git_command(root: &Path) -> Command {
@@ -356,13 +430,7 @@ when origin is absent"
     ))
 }
 
-fn remote_main(name: &str) -> Result<String, String> {
-    let expected_origin = canonical_hosted_origin(name)?;
-    let authenticated_origin = expected_origin
-        .strip_prefix("https://")
-        .map(|suffix| format!("https://git@{suffix}"))
-        .ok_or_else(|| "renderer canonical hosted origin is not HTTPS".to_owned())?;
-    let askpass = held_askpass_executable()?;
+fn hosted_git_command(authenticated_origin: &str, askpass: &Path) -> Command {
     let mut command = Command::new(GIT_BIN);
     command
         .current_dir("/")
@@ -373,15 +441,30 @@ fn remote_main(name: &str) -> Result<String, String> {
             "credential.useHttpPath=true",
             "-c",
             "http.followRedirects=false",
+            "-c",
+            "http.sslVerify=true",
+            "-c",
+            "http.proxy=",
             "ls-remote",
             "--heads",
         ])
-        .arg(&authenticated_origin)
+        .arg(authenticated_origin)
         .arg("refs/heads/main");
     scrub_git_environment(&mut command);
     command
-        .env("GIT_ASKPASS", &askpass)
+        .env("GIT_ASKPASS", askpass)
         .env("JERYU_TOOL_GIT_ASKPASS", "1");
+    command
+}
+
+fn remote_main(name: &str) -> Result<String, String> {
+    let expected_origin = canonical_hosted_origin(name)?;
+    let authenticated_origin = expected_origin
+        .strip_prefix("https://")
+        .map(|suffix| format!("https://git@{suffix}"))
+        .ok_or_else(|| "renderer canonical hosted origin is not HTTPS".to_owned())?;
+    let askpass = held_askpass_executable()?;
+    let mut command = hosted_git_command(&authenticated_origin, &askpass);
     let output = command
         .output()
         .map_err(|_| format!("renderer could not resolve protected main for {name}"))?;
@@ -1138,6 +1221,58 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
                 "hostile credential prompt was accepted: {hostile}"
             );
         }
+    }
+
+    #[test]
+    fn hosted_git_child_rejects_ambient_transport_and_process_injection() {
+        let mut command = Command::new("/usr/bin/env");
+        for key in SCRUBBED_GIT_ENVIRONMENT {
+            command.env(key, "attacker-controlled");
+        }
+        scrub_git_environment(&mut command);
+
+        let environment: BTreeMap<_, _> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|item| item.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        for key in SCRUBBED_GIT_ENVIRONMENT {
+            if matches!(*key, "NO_PROXY" | "no_proxy") {
+                assert_eq!(
+                    environment.get(*key),
+                    Some(&Some(DIRECT_HOST_NO_PROXY.to_owned())),
+                    "direct-host no-proxy policy drifted for {key}"
+                );
+            } else {
+                assert_eq!(
+                    environment.get(*key),
+                    Some(&None),
+                    "hostile child environment survived: {key}"
+                );
+            }
+        }
+
+        let command = hosted_git_command(
+            "https://git@git.neverhuman.org/git/jeryu/jeryu-tool.git",
+            Path::new("/proc/self/exe"),
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.windows(2)
+                .any(|args| args == ["-c", "http.sslVerify=true"])
+        );
+        assert!(args.windows(2).any(|args| args == ["-c", "http.proxy="]));
+        assert!(
+            args.windows(2)
+                .any(|args| args == ["-c", "http.followRedirects=false"])
+        );
     }
 
     #[cfg(unix)]
