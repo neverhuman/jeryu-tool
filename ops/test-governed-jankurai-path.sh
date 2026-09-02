@@ -46,6 +46,10 @@ for source in "${source_lib}" "${source_verifier}"; do
   grep -Fq 'governed jankurai custody mismatch: expected one link' "${source}" ||
     fail "ordinary single-link custody contract is absent from ${source}"
 done
+[[ "$(grep -c '^jankurai() {$' "${source_lib}")" -eq 1 ]] ||
+  fail "consumer library must define exactly one governed Jankurai wrapper"
+grep -Fq 'command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"' "${source_lib}" ||
+  fail "consumer wrapper does not execute the verified governed binary"
 if grep -Eq '/home/ubuntu/\.jeryu/bin/jankurai|JERYU_JANKURAI_BIN:-' \
   "${here}/ci/pr-ci.sh"; then
   fail "PR gate still selects an ambient-home or caller-provided auditor"
@@ -161,6 +165,16 @@ env -i HOME="${tmp}/home" \
 env -i HOME="${tmp}/home" \
   PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
   bash "${test_verifier}" >/dev/null
+
+# Sourcing the rendered library must replace an inherited hostile function.
+# Verification and the subsequent bare command then resolve to the same held
+# executable bytes; the hostile function must never receive control.
+# shellcheck disable=SC2016
+wrapper_command='jankurai() { printf hostile >"$3"; return 97; }; source "$1"; require_jankurai; [[ "$(command -v jankurai)" == jankurai ]]; [[ "$(jankurai --version)" == "$JERYU_JANKURAI_VERSION" ]]; [[ ! -e "$3" ]]'
+env -i HOME="${tmp}/home" \
+  PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
+  bash -c "${wrapper_command}" bash "${test_lib}" "${ambient_bin}" \
+  "${tmp}/hostile-function-executed"
 
 ln "${ambient_bin}" "${tmp}/home/.jeryu/bin/jankurai-linked"
 expect_failure "linked ordinary auditor library" \

@@ -10,6 +10,10 @@ use std::path::Path;
 const MANIFEST_REPO: &str = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
 const SANDBOX_JANKURAI_PATH: &str = "/opt/rust/cargo/bin/jankurai";
 const SANDBOX_RECEIPT_ROOT: &str = "/opt/jeryu/receipts/jankurai/sha256";
+const CANONICAL_JANKURAI_WRAPPER: &str = r#"jankurai() {
+  require_jankurai || return 1
+  command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"
+}"#;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ManifestAuthority {
@@ -183,7 +187,14 @@ fn bind_jankurai_wrapper(text: &str) -> Result<String, String> {
     let wrapper_start = regex(r"(?m)^jankurai\(\)[ \t]*\{[ \t]*$");
     let wrapper_starts: Vec<_> = wrapper_start.find_iter(text).collect();
     if wrapper_starts.is_empty() {
-        return Ok(text.to_owned());
+        let separator = if text.ends_with("\n\n") {
+            ""
+        } else if text.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+        return Ok(format!("{text}{separator}{CANONICAL_JANKURAI_WRAPPER}\n"));
     }
     if wrapper_starts.len() != 1 {
         return Err(format!(
@@ -722,9 +733,14 @@ jankurai() {
         );
 
         let without_wrapper = "require_jankurai\necho no-wrapper\n";
+        let rendered_without_wrapper =
+            bind_jankurai_wrapper(without_wrapper).expect("bind consumer without wrapper");
+        assert_eq!(rendered_without_wrapper.matches("jankurai() {").count(), 1);
+        assert!(rendered_without_wrapper.ends_with(&format!("\n{CANONICAL_JANKURAI_WRAPPER}\n")));
         assert_eq!(
-            bind_jankurai_wrapper(without_wrapper).expect("consumer has no wrapper"),
-            without_wrapper
+            bind_jankurai_wrapper(&rendered_without_wrapper)
+                .expect("generated wrapper is idempotent"),
+            rendered_without_wrapper
         );
     }
 

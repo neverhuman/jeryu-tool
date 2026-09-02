@@ -24,6 +24,9 @@
   shadowing remains fail-closed.
 - Require receipt-bound auditor executables to remain single-link files, so an
   alternate hard-link name cannot create ambiguous custody after installation.
+- Render one canonical verifier-backed `jankurai()` wrapper into every consumer
+  library, so an inherited shell function cannot pass executable verification
+  and then intercept the audit command.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

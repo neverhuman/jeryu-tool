@@ -211,3 +211,8 @@ require_jankurai() {
   fi
   export JANKURAI_NO_UPDATE_CHECK=1 GIT_TERMINAL_PROMPT=0
 }
+
+jankurai() {
+  require_jankurai || return 1
+  command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"
+}
