@@ -72,6 +72,11 @@ require_jankurai() {
     printf 'release broker Jankurai custody mismatch: expected mode 0555 and one link at %s\n' \
       "${bin}" >&2
     exit 1
+  elif [[ "${mode}" != "release-broker" &&
+          "$(stat -c '%h' -- "${bin}" 2>/dev/null || true)" != "1" ]]; then
+    printf 'governed jankurai custody mismatch: expected one link at %s\n' \
+      "${bin}" >&2
+    exit 1
   fi
   if [[ "${mode}" != "release-broker" ]]; then
     bin_dir="$(dirname "${bin}")"

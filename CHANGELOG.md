@@ -22,6 +22,8 @@
 - Resolve executable files independently of shell functions, so a generated
   `jankurai()` wrapper cannot shadow the authenticated binary while real PATH
   shadowing remains fail-closed.
+- Require receipt-bound auditor executables to remain single-link files, so an
+  alternate hard-link name cannot create ambiguous custody after installation.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

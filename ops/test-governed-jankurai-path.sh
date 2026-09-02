@@ -43,6 +43,8 @@ for source in "${source_lib}" "${source_verifier}"; do
     fail "release broker mode is absent from ${source}"
   grep -Fq "${production_governed}" "${source}" ||
     fail "ordinary governed path contract is absent from ${source}"
+  grep -Fq 'governed jankurai custody mismatch: expected one link' "${source}" ||
+    fail "ordinary single-link custody contract is absent from ${source}"
 done
 if grep -Eq '/home/ubuntu/\.jeryu/bin/jankurai|JERYU_JANKURAI_BIN:-' \
   "${here}/ci/pr-ci.sh"; then
@@ -159,6 +161,19 @@ env -i HOME="${tmp}/home" \
 env -i HOME="${tmp}/home" \
   PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
   bash "${test_verifier}" >/dev/null
+
+ln "${ambient_bin}" "${tmp}/home/.jeryu/bin/jankurai-linked"
+expect_failure "linked ordinary auditor library" \
+  "governed jankurai custody mismatch: expected one link" \
+  env -i HOME="${tmp}/home" \
+  PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
+  bash -c "${ordinary_command}" bash "${test_lib}" "${ambient_bin}"
+expect_failure "linked ordinary auditor verifier" \
+  "governed jankurai custody mismatch: expected one link" \
+  env -i HOME="${tmp}/home" \
+  PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" \
+  bash "${test_verifier}"
+rm -f -- "${tmp}/home/.jeryu/bin/jankurai-linked"
 
 run_release_broker() {
   local path="$1"
