@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const CANONICAL_FAMILY_ROOT: &str = "/home/ubuntu/jain-split/jeryu-split";
-const DEFAULT_TOKEN_FILE: &str = "/home/ubuntu/.jeryu/secrets/merge-token";
 const GIT_BIN: &str = "/usr/bin/git";
 const SHA256_BIN: &str = "/usr/bin/sha256sum";
+const HOSTED_JERYU_GIT_BASE: &str = "https://git.neverhuman.org/git/jeryu";
 const CANONICAL_REPOS: [&str; 11] = [
     "jeryu",
     "jeryu-cache",
@@ -29,6 +29,25 @@ const CANONICAL_REPOS: [&str; 11] = [
     "jeryu-tool-finder",
     "jeryu-web",
 ];
+
+fn canonical_hosted_origin(name: &str) -> Result<String, String> {
+    if !CANONICAL_REPOS.contains(&name) {
+        return Err(format!(
+            "renderer has no canonical hosted origin for repository: {name:?}"
+        ));
+    }
+    Ok(format!("{HOSTED_JERYU_GIT_BASE}/{name}.git"))
+}
+
+fn require_canonical_hosted_origin(name: &str, origin: &str) -> Result<String, String> {
+    let expected = canonical_hosted_origin(name)?;
+    if origin != expected {
+        return Err(format!(
+            "renderer repository has non-canonical hosted origin: {name}={origin}; expected {expected}"
+        ));
+    }
+    Ok(expected)
+}
 
 #[derive(Default)]
 struct Args {
@@ -219,8 +238,46 @@ fn read_token_file_with_hook(path: &Path, _after_open: impl FnOnce()) -> Result<
 fn read_forge_token() -> Result<String, String> {
     let path = env::var_os("JERYU_FORGE_TOKEN_FILE")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_TOKEN_FILE));
+        .ok_or_else(|| {
+            "renderer authenticated hosted read requires JERYU_FORGE_TOKEN_FILE".to_owned()
+        })?;
     read_token_file_with_hook(&path, || {})
+}
+
+fn canonical_askpass_prompt(prompt: &str) -> bool {
+    let Some(path) = prompt
+        .strip_prefix("Password for 'https://git@git.neverhuman.org/git/jeryu/")
+        .and_then(|value| value.strip_suffix("': "))
+    else {
+        return false;
+    };
+    let Some(name) = path.strip_suffix(".git") else {
+        return false;
+    };
+    CANONICAL_REPOS.contains(&name)
+}
+
+pub(crate) fn git_askpass(raw_args: &[String]) -> Result<String, String> {
+    if raw_args.len() != 1 || !canonical_askpass_prompt(&raw_args[0]) {
+        return Err("renderer hosted credential prompt failed custody validation".to_owned());
+    }
+    read_forge_token()
+}
+
+#[cfg(unix)]
+fn held_askpass_executable() -> Result<PathBuf, String> {
+    let path = PathBuf::from(format!("/proc/{}/exe", std::process::id()));
+    let metadata = fs::metadata(&path)
+        .map_err(|_| "renderer could not resolve held credential helper".to_owned())?;
+    if !metadata.file_type().is_file() || metadata.mode() & 0o111 == 0 {
+        return Err("renderer could not resolve held credential helper".to_owned());
+    }
+    Ok(path)
+}
+
+#[cfg(not(unix))]
+fn held_askpass_executable() -> Result<PathBuf, String> {
+    Err("renderer hosted credential helper requires Unix process custody".to_owned())
 }
 
 fn git_remote_url(root: &Path, name: &str) -> Result<Option<String>, String> {
@@ -252,19 +309,14 @@ fn git_remote_url(root: &Path, name: &str) -> Result<Option<String>, String> {
 fn protected_main_commit(
     tool_root: &Path,
     name: &str,
-    expected_origin: &str,
     authenticated: bool,
     contract_base_ref: Option<&str>,
     release_ci: bool,
 ) -> Result<String, String> {
     if let Some(origin) = git_remote_url(tool_root, "origin")? {
-        if origin != expected_origin {
-            return Err(format!(
-                "renderer tool source has non-canonical origin: {origin}; expected {expected_origin}"
-            ));
-        }
+        require_canonical_hosted_origin(name, &origin)?;
         if authenticated {
-            return remote_main(name, expected_origin);
+            return remote_main(name);
         }
         let commit = git_local_output(tool_root, &["rev-parse", "refs/remotes/origin/main"])?;
         if !regex("^[0-9a-f]{40}$").is_match(&commit) {
@@ -287,7 +339,7 @@ fn protected_main_commit(
     }
 
     if authenticated {
-        return remote_main(name, expected_origin);
+        return remote_main(name);
     }
 
     if release_ci {
@@ -304,27 +356,32 @@ when origin is absent"
     ))
 }
 
-fn remote_main(name: &str, expected_origin: &str) -> Result<String, String> {
-    let token = read_forge_token()?;
+fn remote_main(name: &str) -> Result<String, String> {
+    let expected_origin = canonical_hosted_origin(name)?;
+    let authenticated_origin = expected_origin
+        .strip_prefix("https://")
+        .map(|suffix| format!("https://git@{suffix}"))
+        .ok_or_else(|| "renderer canonical hosted origin is not HTTPS".to_owned())?;
+    let askpass = held_askpass_executable()?;
     let mut command = Command::new(GIT_BIN);
-    command.current_dir("/").args([
-        "-c",
-        "credential.helper=",
-        "ls-remote",
-        "--heads",
-        expected_origin,
-        "refs/heads/main",
-    ]);
+    command
+        .current_dir("/")
+        .args([
+            "-c",
+            "credential.helper=",
+            "-c",
+            "credential.useHttpPath=true",
+            "-c",
+            "http.followRedirects=false",
+            "ls-remote",
+            "--heads",
+        ])
+        .arg(&authenticated_origin)
+        .arg("refs/heads/main");
     scrub_git_environment(&mut command);
     command
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_0", "http.extraHeader")
-        .env(
-            "GIT_CONFIG_VALUE_0",
-            format!("Authorization: Bearer {token}"),
-        )
-        .env("GIT_CONFIG_KEY_1", "http.followRedirects")
-        .env("GIT_CONFIG_VALUE_1", "false");
+        .env("GIT_ASKPASS", &askpass)
+        .env("JERYU_TOOL_GIT_ASKPASS", "1");
     let output = command
         .output()
         .map_err(|_| format!("renderer could not resolve protected main for {name}"))?;
@@ -377,13 +434,11 @@ fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn manifest_authority(tool_root: &Path, authenticated: bool) -> Result<ManifestAuthority, String> {
-    let expected_origin = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
     let contract_base_ref = env::var("JAIN_CONTRACT_BASE_REF").ok();
     let release_ci = env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1");
     let commit = protected_main_commit(
         tool_root,
         "jeryu-tool",
-        expected_origin,
         authenticated,
         contract_base_ref.as_deref(),
         release_ci,
@@ -631,20 +686,15 @@ fn validate_write_root(
             root.display()
         ));
     }
-    let expected_origin = format!("http://127.0.0.1:8787/git/jeryu/{name}.git");
     let origin = git_local_output(root, &["remote", "get-url", "origin"])?;
-    if origin != expected_origin {
-        return Err(format!(
-            "renderer write root has non-canonical origin: {name}={origin}; expected {expected_origin}"
-        ));
-    }
+    require_canonical_hosted_origin(name, &origin)?;
     let head = git_local_output(root, &["rev-parse", "HEAD"])?;
     if head != expected_head {
         return Err(format!(
             "renderer write root HEAD mismatch: {name} expected={expected_head} actual={head}"
         ));
     }
-    let protected_main = remote_main(name, &expected_origin)?;
+    let protected_main = remote_main(name)?;
     let mut ancestry = local_git_command(root);
     let status = ancestry
         .args(["merge-base", "--is-ancestor", &protected_main, &head])
@@ -1037,6 +1087,59 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
         );
     }
 
+    #[test]
+    fn hosted_repository_origin_is_exact_and_fail_closed() {
+        let expected = "https://git.neverhuman.org/git/jeryu/jeryu-tool.git";
+        assert_eq!(
+            canonical_hosted_origin("jeryu-tool").expect("canonical hosted origin"),
+            expected
+        );
+        assert_eq!(
+            require_canonical_hosted_origin("jeryu-tool", expected).expect("exact hosted origin"),
+            expected
+        );
+
+        for hostile in [
+            "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+            "http://git.neverhuman.org/git/jeryu/jeryu-tool.git",
+            "https://jepsont@git.neverhuman.org/git/jeryu/jeryu-tool.git",
+            "https://git.neverhuman.org.evil.invalid/git/jeryu/jeryu-tool.git",
+            "https://git.neverhuman.org/git/veox/jeryu-tool.git",
+            "https://git.neverhuman.org/git/jeryu/jeryu-web.git",
+            "https://git.neverhuman.org/git/jeryu/jeryu-tool",
+            "https://git.neverhuman.org/git/jeryu/jeryu-tool.git/",
+            "https://git.neverhuman.org/git/jeryu/jeryu-tool.git?ref=main",
+            "https://git.neverhuman.org/git/jeryu/jeryu-tool.git#main",
+            "ssh://git@git.neverhuman.org/jeryu/jeryu-tool.git",
+        ] {
+            assert!(
+                require_canonical_hosted_origin("jeryu-tool", hostile).is_err(),
+                "hostile origin was accepted: {hostile}"
+            );
+        }
+        assert!(canonical_hosted_origin("../jeryu-tool").is_err());
+        assert!(canonical_hosted_origin("jeryu-tool.git").is_err());
+        assert!(canonical_hosted_origin("Jeryu-Tool").is_err());
+
+        assert!(canonical_askpass_prompt(
+            "Password for 'https://git@git.neverhuman.org/git/jeryu/jeryu-tool.git': "
+        ));
+        for hostile in [
+            "Username for 'https://git.neverhuman.org': ",
+            "Password for 'https://git.neverhuman.org': ",
+            "Password for 'https://git@git.neverhuman.org': ",
+            "Password for 'https://git@git.neverhuman.org/git/veox/jeryu-tool.git': ",
+            "Password for 'https://git@git.neverhuman.org/git/jeryu/../jeryu-tool.git': ",
+            "Password for 'https://git@git.neverhuman.org/git/jeryu/jeryu-tool': ",
+            "Password for 'https://git@git.neverhuman.org/git/jeryu/jeryu-tool.git/': ",
+        ] {
+            assert!(
+                !canonical_askpass_prompt(hostile),
+                "hostile credential prompt was accepted: {hostile}"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn protected_main_commit_accepts_harness_contract_base_without_origin() {
@@ -1048,15 +1151,8 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
         run_fixture_git(&root, &["add", "marker.txt"]);
         run_fixture_git(&root, &["commit", "-q", "-m", "fixture"]);
         let head = git_local_output(&root, &["rev-parse", "HEAD"]).expect("head");
-        let resolved = protected_main_commit(
-            &root,
-            "jeryu-tool",
-            "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
-            false,
-            Some(&head),
-            false,
-        )
-        .expect("harness contract base");
+        let resolved = protected_main_commit(&root, "jeryu-tool", false, Some(&head), false)
+            .expect("harness contract base");
         assert_eq!(resolved, head);
         fs::remove_dir_all(root).expect("remove test root");
     }
@@ -1066,15 +1162,8 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
     fn protected_main_commit_rejects_release_without_contract_base_or_origin() {
         let root = test_root("release-no-base");
         run_fixture_git(&root, &["init", "-q"]);
-        let error = protected_main_commit(
-            &root,
-            "jeryu-tool",
-            "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
-            false,
-            None,
-            true,
-        )
-        .expect_err("release without origin must fail closed");
+        let error = protected_main_commit(&root, "jeryu-tool", false, None, true)
+            .expect_err("release without origin must fail closed");
         assert!(error.contains("JAIN_CONTRACT_BASE_REF"));
         fs::remove_dir_all(root).expect("remove test root");
     }
@@ -1082,6 +1171,11 @@ v9.9.9-deadlang-precision-split.9 / https://github.com/neverhuman/jankurai.git\n
     #[cfg(unix)]
     #[test]
     fn credential_file_custody_rejects_mode_links_and_path_swaps() {
+        let held = held_askpass_executable().expect("held askpass executable");
+        assert_eq!(
+            held,
+            PathBuf::from(format!("/proc/{}/exe", std::process::id()))
+        );
         let root = test_root("credential");
         let token = root.join("token");
         write_private(&token, "fixture-token\n");

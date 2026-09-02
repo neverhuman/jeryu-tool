@@ -58,8 +58,11 @@ Write-mode hostiles additionally prove that only
 one ordinary local `.git` directory and no additional registered worktrees,
 checkout-local Git execution is disabled, and the credential is read only from
 an absolute stable mode-0600 owner-held single-link regular file. Authentication
-is supplied only to the fixed `/usr/bin/git`, repository-independent
-local-forge protected-main read, after all local checkout checks have passed.
+is supplied only to the fixed `/usr/bin/git`, repository-independent hosted
+protected-main read, after all local checkout checks have passed.
+`JERYU_FORGE_TOKEN_FILE` is mandatory for authenticated write mode; its value is
+a credential path, and the PAT itself reaches Git only through the
+custody-checked askpass pipe.
 
 ## Exact-head host isolation
 
@@ -71,7 +74,7 @@ disposable clone explicitly to live forge readback before running the gate:
 
 ```bash
 repo_path=/home/ubuntu/jain-split/jeryu-split/jeryu-tool
-remote=http://127.0.0.1:8787/git/jeryu/jeryu-tool.git
+remote=https://git.neverhuman.org/git/jeryu/jeryu-tool.git
 head=<full-published-pr-sha>
 protected_main="$(git ls-remote "$remote" refs/heads/main | awk '{print $1}')"
 sandbox="$(mktemp -d /tmp/jeryu-tool-required.XXXXXX)"

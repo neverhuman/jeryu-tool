@@ -19,7 +19,7 @@ correction uses the next linear tag.
 - `ops/render-tool-manifest.sh --check` reports no generated drift.
 - `just` passes with the governed binary: fast, check, score, and security.
 - Exact-head required CI passes in an automatically removed `clone --no-local`
-  sandbox and is read back from the forge at the full published SHA.
+  sandbox and is read back from `git.neverhuman.org` at the full published SHA.
 - Branch protection still requires linear history, the exact required context,
   enforced administrators, and one approval from an identity other than the
   author.

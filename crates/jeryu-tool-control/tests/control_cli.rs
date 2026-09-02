@@ -1,5 +1,10 @@
 use std::path::Path;
 use std::process::Command;
+#[cfg(unix)]
+use std::{
+    os::unix::fs::PermissionsExt,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn command(root: &Path, arguments: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_jeryu-toolctl"))
@@ -45,4 +50,42 @@ fn emitted_verifier_is_bound_to_the_static_template() {
     assert!(verifier.contains(template.trim_end()));
     assert!(verifier.contains("/opt/jain-ci/authority/release-bin/jankurai"));
     assert!(verifier.contains("# BEGIN GENERATED JANKURAI PIN"));
+}
+
+#[cfg(unix)]
+#[test]
+fn hosted_askpass_is_path_only_and_prompt_bound() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let fixture_root =
+        std::env::temp_dir().join(format!("jeryu-tool-askpass-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&fixture_root).expect("create askpass fixture");
+    let token_file = fixture_root.join("token");
+    std::fs::write(&token_file, "fixture-hosted-token\n").expect("write fixture token");
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))
+        .expect("set fixture token mode");
+
+    let accepted = Command::new(env!("CARGO_BIN_EXE_jeryu-toolctl"))
+        .env("JERYU_TOOL_GIT_ASKPASS", "1")
+        .env("JERYU_FORGE_TOKEN_FILE", &token_file)
+        .arg("Password for 'https://git@git.neverhuman.org/git/jeryu/jeryu-tool.git': ")
+        .output()
+        .expect("run hosted askpass");
+    assert!(accepted.status.success());
+    assert_eq!(accepted.stdout, b"fixture-hosted-token\n");
+    assert!(accepted.stderr.is_empty());
+
+    let rejected = Command::new(env!("CARGO_BIN_EXE_jeryu-toolctl"))
+        .env("JERYU_TOOL_GIT_ASKPASS", "1")
+        .env("JERYU_FORGE_TOKEN_FILE", &token_file)
+        .arg("Password for 'https://git@git.neverhuman.org/git/veox/jeryu-tool.git': ")
+        .output()
+        .expect("run hostile askpass");
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(rejected.stderr.is_empty());
+
+    std::fs::remove_dir_all(fixture_root).expect("remove askpass fixture");
 }

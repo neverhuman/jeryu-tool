@@ -4,6 +4,7 @@ mod render;
 mod render_rules;
 
 use std::env;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -101,6 +102,16 @@ fn run() -> Result<i32, ControlError> {
 }
 
 fn main() -> ExitCode {
+    if env::var_os("JERYU_TOOL_GIT_ASKPASS").as_deref() == Some(OsStr::new("1")) {
+        let args: Vec<String> = env::args().skip(1).collect();
+        return match render::git_askpass(&args) {
+            Ok(password) => {
+                println!("{password}");
+                ExitCode::SUCCESS
+            }
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
     match run() {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(message) => {

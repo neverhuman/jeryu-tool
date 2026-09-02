@@ -14,7 +14,7 @@ reviewed lifecycle. Source tags and release tags are immutable.
 `jeryu-toolctl render-tool-manifest` derives `generated/jankurai-pin.env` and
 the declared family consumer blocks from that manifest. Check mode is
 read-only. Write mode accepts only canonical checkouts, exact expected heads,
-and protected-main authority read back from the local forge. Generated blocks
+and protected-main authority read back from the hosted forge. Generated blocks
 are never independent sources of truth.
 
 The governed installer builds from the immutable source with the closed vendor
@@ -40,9 +40,14 @@ lives in `jeryu-core` and `jeryu-deploy`; release guards live in
 
 ## Trust boundaries
 
-The local Jeryu forge is the only source and review authority. Git reads use a
-fixed executable and canonical forge URL. Credentials are read from an absolute,
-mode-0600, owner-held, single-link file and are never placed in process arguments.
+`https://git.neverhuman.org` is the repository source and review authority. Git
+reads use a fixed executable and the exact
+`https://git.neverhuman.org/git/jeryu/<repo>.git` identity; loopback transition
+remotes and URL variants cannot satisfy custody.
+Credentials are read from an explicit absolute, mode-0600, owner-held,
+single-link file. The same-inode, process-held askpass child receives only that
+path, so PAT bytes are never placed in process arguments or environment
+variables.
 
 Canonical checkouts are single-writer and may not have registered worktrees.
 Exact-head CI uses an automatically removed `clone --no-local` sandbox, a

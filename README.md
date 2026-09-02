@@ -25,7 +25,7 @@ registry.
 
 | Path | Purpose |
 |---|---|
-| `tool-manifest.toml` | **Audit source of truth**: local-forge commit/tag, source tree/archive and lock digests, closed vendor and builder identities, exact build contract, binary digest, per-profile score floors, and per-tool default modes. |
+| `tool-manifest.toml` | **Audit source of truth**: governed source commit/tag, source tree/archive and lock digests, closed vendor and builder identities, exact build contract, binary digest, per-profile score floors, and per-tool default modes. |
 | `tools-registry.toml` | **Registry source of truth**: one `[[tool]]` per reusable tool — kind, status, adopting/candidate repos, realized + anticipated LOC saved. |
 | `tasks/NNNN-*.toml` | Reusable-tool **build queue**: build-this-tool / migrate-these-repos work items. |
 | `ops/registry-summary.sh` | Runs the locked Rust validator for the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
@@ -66,7 +66,7 @@ score, and the security lane.
 `ops/render-tool-manifest.sh --check` fails CI if any consumer drifted from the
 manifest, so a half-done bump can never ship.
 
-The local protected PR gate may qualify an exact premerge candidate only in a
+The hosted protected PR gate may qualify an exact premerge candidate only in a
 temporary root with `test_mode=true` and a content-addressed receipt. That
 diagnostic candidate never grants installation or merge authority. The bounded
 PR7 bootstrap described in `docs/release.md` is the only exception to ordinary
@@ -76,8 +76,8 @@ before returning. Once an independently reviewed candidate is installed after
 protected merge, the same gate automatically requires
 `/home/ubuntu/.jeryu/bin/jankurai` plus its production receipt (or can be
 forced fail-closed with `JERYU_TOOL_REQUIRE_GOVERNED_HOST=1`). The GitHub
-workflow is a static, non-authoritative mirror because it cannot reach the
-100%-local forge.
+workflow is a static, non-authoritative mirror and is not a release or review
+authority.
 
 ## Relationship to standalone jankurai
 

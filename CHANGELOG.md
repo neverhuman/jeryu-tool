@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Made the exact `git.neverhuman.org` HTTPS repository identity authoritative
+  for renderer protected-main and write-root custody, while retaining the
+  governed Jankurai source spelling and generated consumer identity unchanged.
+- Replaced Bearer-token environment injection with a same-inode askpass path:
+  authenticated Git receives PAT bytes only over its credential pipe, and
+  hostile origin, prompt, credential-file, and URL variants fail closed.
+
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 
 ### Changed
