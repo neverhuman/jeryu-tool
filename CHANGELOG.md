@@ -13,6 +13,9 @@
 - Made the credential-bearing protected-main read independent of ambient proxy,
   TLS/CA, trace-output, and dynamic-loader overrides, with direct hosted routing,
   redirects disabled, and platform-CA certificate verification required.
+- Made generated shell pin replacement in-place and byte-idempotent, preserving
+  authored command order while rejecting ambiguous markers and strict-shell
+  setup instead of silently rewriting malformed consumers.
 
 ## jeryu-tool-v5.1.0-split.5 — 2026-08-02
 

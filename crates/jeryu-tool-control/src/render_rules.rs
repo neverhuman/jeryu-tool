@@ -131,23 +131,46 @@ pub(crate) fn regex(pattern: &str) -> Regex {
     Regex::new(pattern).expect("constant renderer regex")
 }
 
-fn replace_pin_block(text: &str, pin: &Pin) -> String {
-    let marked = regex(&format!(
-        r"(?ms)\n*^{}$.*?^{}$\n*",
-        regex::escape(PIN_MARKER_BEGIN),
-        regex::escape(PIN_MARKER_END)
-    ));
-    let stripped = marked.replace_all(text, "\n");
-    let set = regex(r"(?m)^set -euo pipefail\s*$");
-    let Some(found) = set.find(&stripped) else {
-        return stripped.into_owned();
-    };
-    format!(
-        "{}\n\n{}\n\n{}",
-        &stripped[..found.end()],
-        pin.shell_block(),
-        stripped[found.end()..].trim_start()
-    )
+fn replace_pin_block(text: &str, pin: &Pin) -> Result<String, String> {
+    let begin_pattern = regex(&format!(r"(?m)^{}$", regex::escape(PIN_MARKER_BEGIN)));
+    let end_pattern = regex(&format!(r"(?m)^{}$", regex::escape(PIN_MARKER_END)));
+    let begin_matches: Vec<_> = begin_pattern.find_iter(text).collect();
+    let end_matches: Vec<_> = end_pattern.find_iter(text).collect();
+    match (begin_matches.as_slice(), end_matches.as_slice()) {
+        ([], []) => {
+            let set_pattern = regex(r"(?m)^set -euo pipefail[ \t]*$");
+            let set_matches: Vec<_> = set_pattern.find_iter(text).collect();
+            if set_matches.is_empty() {
+                return Ok(text.to_owned());
+            }
+            if set_matches.len() != 1 {
+                return Err(format!(
+                    "unmarked Jankurai pin consumer must contain exactly one \
+`set -euo pipefail`; found {}",
+                    set_matches.len()
+                ));
+            }
+            let insertion = set_matches[0].end();
+            Ok(format!(
+                "{}\n\n{}{}",
+                &text[..insertion],
+                pin.shell_block(),
+                &text[insertion..]
+            ))
+        }
+        ([begin], [end]) if begin.start() < end.start() => {
+            let mut rendered = String::with_capacity(text.len() + pin.shell_block().len());
+            rendered.push_str(&text[..begin.start()]);
+            rendered.push_str(&pin.shell_block());
+            rendered.push_str(&text[end.end()..]);
+            Ok(rendered)
+        }
+        _ => Err(format!(
+            "Jankurai pin consumer has malformed generated markers: begin={} end={}",
+            begin_matches.len(),
+            end_matches.len()
+        )),
+    }
 }
 
 fn replace_require_function(text: &str, function: &str) -> String {
@@ -393,12 +416,12 @@ pub(crate) fn render_consumer(
     }
     if name == "lib.sh" && rel.contains("/ops/ci/") {
         return Ok(semantic_identity_rules(
-            &replace_require_function(&replace_pin_block(&text, pin), function),
+            &replace_require_function(&replace_pin_block(&text, pin)?, function),
             pin,
         ));
     }
     if path.extension().and_then(|value| value.to_str()) == Some("sh") {
-        text = replace_pin_block(&text, pin);
+        text = replace_pin_block(&text, pin)?;
     }
     if matches!(name, "audit-policy.toml" | "default-audit-policy.toml") {
         return Ok(regex(r#"(required_tool_version\s*=\s*")[^"]*(")"#)
@@ -575,5 +598,64 @@ mod tests {
                 context.image_receipt_sha256
             )
         );
+    }
+
+    #[test]
+    fn pin_block_replacement_is_in_place_and_idempotent() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin = Pin::load(&root).expect("canonical pin");
+        let stale = pin
+            .shell_block()
+            .replace(pin.get("version"), "jankurai 0.0.0");
+        let input = format!(
+            "#!/usr/bin/env bash\nsource before-generated.sh\n\n{stale}\n\necho after-generated\n"
+        );
+
+        let once = replace_pin_block(&input, &pin).expect("first render");
+        let twice = replace_pin_block(&once, &pin).expect("second render");
+        assert_eq!(once, twice);
+        assert_eq!(once.matches(PIN_MARKER_BEGIN).count(), 1);
+        assert_eq!(once.matches(PIN_MARKER_END).count(), 1);
+        assert!(once.contains("source before-generated.sh\n\n"));
+        assert!(once.ends_with("\n\necho after-generated\n"));
+        assert!(
+            once.find("source before-generated.sh").unwrap() < once.find(PIN_MARKER_BEGIN).unwrap()
+        );
+        assert!(once.find(PIN_MARKER_END).unwrap() < once.find("echo after-generated").unwrap());
+
+        let unmarked = "#!/usr/bin/env bash\nset -euo pipefail\necho retained\n";
+        let inserted = replace_pin_block(unmarked, &pin).expect("insert missing block");
+        assert!(inserted.contains(&format!("set -euo pipefail\n\n{}", pin.shell_block())));
+        assert!(inserted.ends_with("\necho retained\n"));
+        assert_eq!(
+            replace_pin_block(&inserted, &pin).expect("render inserted block again"),
+            inserted
+        );
+
+        let unowned = "#!/bin/sh\necho no-pin-consumer\n";
+        assert_eq!(
+            replace_pin_block(unowned, &pin).expect("leave unowned shell unchanged"),
+            unowned
+        );
+    }
+
+    #[test]
+    fn pin_block_replacement_rejects_ambiguous_or_malformed_shell() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin = Pin::load(&root).expect("canonical pin");
+        let block = pin.shell_block();
+        let malformed = [
+            format!("#!/bin/sh\nset -euo pipefail\n{PIN_MARKER_BEGIN}\n"),
+            format!("#!/bin/sh\nset -euo pipefail\n{PIN_MARKER_END}\n{PIN_MARKER_BEGIN}\n"),
+            format!("#!/bin/sh\nset -euo pipefail\n{block}\n{block}\n"),
+            "#!/bin/sh\nset -euo pipefail\nset -euo pipefail\n".to_owned(),
+        ];
+
+        for input in malformed {
+            assert!(
+                replace_pin_block(&input, &pin).is_err(),
+                "accepted {input:?}"
+            );
+        }
     }
 }

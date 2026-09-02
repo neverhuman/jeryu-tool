@@ -66,6 +66,13 @@ custody-checked askpass pipe. The Git child clears ambient proxy, TLS/CA,
 trace-output, and dynamic-loader overrides, restores only the canonical hosted
 Git address plus loopback in `NO_PROXY`, disables Git proxy use and redirects,
 and explicitly requires platform-CA certificate and hostname verification.
+Generated shell pin replacement is also byte-idempotent after one pass: it
+updates the single marked block in place without relocating surrounding authored
+commands, and rejects duplicate markers, partial markers, reversed markers, or
+multiple insertion anchors instead of deleting or normalizing ambiguous input.
+A valid existing marked block is updated without imposing a new shell policy;
+an unmarked script with one strict-shell anchor receives the block, while an
+unmarked script with no insertion anchor remains byte-identical.
 
 ## Exact-head host isolation
 
