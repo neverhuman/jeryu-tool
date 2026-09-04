@@ -4,6 +4,10 @@ source ops/ci/lib.sh
 cd "$REPO_ROOT"
 require_tool jq
 
+grep -Fqx -- '- `tool-manifest.toml` is the immutable Jankurai pin and consumer-rendering authority.' contracts/README.md
+grep -Fqx -- '- `tools-registry.toml` and `tasks/*.toml` are the reusable-tool and build-queue authorities.' contracts/README.md
+grep -Fqx -- '- `schemas/*.schema.json` are the closed evidence and repair receipt contracts.' contracts/README.md
+
 for schema in schemas/*.schema.json; do
   jq -e '."$schema" == "https://json-schema.org/draft/2020-12/schema" and
     .type == "object" and .additionalProperties == false' "$schema" >/dev/null

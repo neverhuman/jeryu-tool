@@ -55,6 +55,11 @@
       "lane": "score",
       "purpose": "verify agent metadata parses and routes proof lanes"
     },
+    "contracts/": {
+      "command": "just contract-drift",
+      "lane": "contract-drift",
+      "purpose": "verify the public control contracts stay bound to their exact authorities and generated consumers"
+    },
     "docs/": {
       "command": "just check && just score",
       "lane": "docs",

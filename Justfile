@@ -11,10 +11,10 @@ fast:
 
 # Bounded, locked, package-only feedback using the governed shared compiler cache.
 fast-proof:
-  RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}" CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/fast-proof/cargo}" cargo check --locked --offline -p jeryu-tool-control --jobs {{jobs}}
+  RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}" CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/fast-proof/cargo}" cargo check -p jeryu-tool-control --locked --offline --jobs {{jobs}}
 
 fast-test:
-  RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}" CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/fast-proof/cargo}" cargo test --locked --offline -p jeryu-tool-control --all-targets --jobs {{jobs}}
+  RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}" CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/fast-proof/cargo}" cargo test -p jeryu-tool-control --locked --offline --all-targets --jobs {{jobs}}
 
 fast-coverage:
   ./ops/ci/coverage.sh
