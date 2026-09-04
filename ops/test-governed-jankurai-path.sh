@@ -4,6 +4,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_lib="${here}/ci/lib.sh"
+# shellcheck source=ops/ci/lib.sh
 source "${source_lib}"
 production_broker="/opt/jain-ci/authority/release-bin/jankurai"
 production_governed="/home/ubuntu/.jeryu/bin/jankurai"

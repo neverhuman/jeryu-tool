@@ -15,15 +15,49 @@ Or run the lanes individually (same scripts CI runs — see `agent/proof-lanes.t
 
 - `just fast` — assert every family consumer's pin matches `tool-manifest.toml`
   (`ops/render-tool-manifest.sh --check`).
+- `just fast-proof` / `just fast-test` — locked, offline, package-only compile
+  and test feedback with four jobs by default and a dedicated sccache-backed
+  target directory. Override `JERYU_TOOL_CI_JOBS` only with a bounded integer.
+- `just fast-coverage` — produce Rust LCOV for `jeryu-tool-control` and audit
+  the declared coverage source.
 - `just check` — the manifest, registry tools, and task files match their exact
   closed key sets and field relationships; the generated pin is current; Rust
   tests and warnings-denied Clippy pass locked and offline; and every shell
   entrypoint is syntactically valid.
-- `just score` — the pinned jankurai audit over this repo (writes `.jankurai/`).
-- `just security` — gitleaks / actionlint / committed-`.env` checks.
+- `just score` — generate proof/security/coverage/contract evidence, then run
+  the pinned jankurai audit over this repo (writes `.jankurai/`).
+- `just security` — required gitleaks and actionlint, locked Cargo metadata,
+  conditional dependency policy/advisory checks, and a Syft source SBOM.
+- `just repair-receipt-contract` — hostile create-once receipt custody tests.
+- `just required` — the complete merge-blocking local contract.
 
 `scripts/ci-local.sh` runs `fast` + `check`; `scripts/ci-doctor.sh` runs `score`;
 `ops/git-hooks/pre-push` runs `fast` + `check` + `score` before any push.
+
+## Repair receipts
+
+When a lane fails, preserve its raw target evidence and emit a bounded receipt:
+
+```bash
+ops/ci/repair-receipt.sh emit \
+  --output target/repair-receipts/<run-id>.json \
+  --lane <lane> --purpose '<one line>' --exit-code <0..255> \
+  --started-at <UTC-second> --finished-at <UTC-second> \
+  --evidence target/<path>
+ops/ci/repair-receipt.sh verify target/repair-receipts/<run-id>.json
+```
+
+Receipts are create-once canonical JSON bound to the clean committed HEAD/tree,
+an argv-safe named `just` lane, and physical one-link evidence files. The
+hostile contract rejects replay, traversal, symlink and hardlink aliases,
+evidence mutation, wrong source identity, malformed/noncanonical content, and
+pathname replacement after selection. Never edit a receipt to turn failure
+into success; correct the source and emit a new run ID.
+
+This repository has no database or paid request runtime. The reviewed TOML/Git
+inputs and content-addressed receipts are its only durable data boundaries, and
+diagnostic workflows stop after ten minutes. Do not invent migrations, spend
+records, or service kill switches merely to satisfy a generic product rubric.
 
 ## Agent-readable control errors
 

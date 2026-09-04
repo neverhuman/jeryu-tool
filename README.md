@@ -51,7 +51,9 @@ just
 ```
 
 The full local gate runs drift, locked Rust tests and Clippy, the Jankurai
-score, and the security lane.
+score, security/SBOM, changed-surface proof, coverage, closed-schema contract,
+and repair-receipt hostile lanes. `just fast-proof` and `just fast-test` are the
+bounded package-only feedback commands; `just required` is the complete gate.
 
 ## Upgrading jankurai (the whole family at once)
 

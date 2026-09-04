@@ -15,6 +15,11 @@
       "lane": "score",
       "purpose": "verify split metadata and agent maps"
     },
+    "CLAUDE.md": {
+      "command": "just score",
+      "lane": "score",
+      "purpose": "verify the thin cross-agent pointer stays canonical"
+    },
     "CHANGELOG.md": {
       "command": "just score",
       "lane": "score",
@@ -61,9 +66,19 @@
       "purpose": "verify the generated pin env matches tool-manifest.toml"
     },
     "ops/": {
-      "command": "just fast && just check",
-      "lane": "ci-check",
-      "purpose": "verify the generator/installer parse and the pin stays consistent"
+      "command": "just required",
+      "lane": "required",
+      "purpose": "verify control scripts, custody hostiles, generated identity, and exact evidence"
+    },
+    "ops/ci/repair-receipt.sh": {
+      "command": "just repair-receipt-contract",
+      "lane": "repair-receipt-contract",
+      "purpose": "prove create-once exact-source evidence and pathname custody"
+    },
+    "ops/ci/proof-routing.sh": {
+      "command": "just proof-routing",
+      "lane": "proof-routing",
+      "purpose": "prove every changed path is routed and hostile plans fail closed"
     },
     "ops/install-jankurai.sh": {
       "command": "just check",
@@ -99,6 +114,11 @@
       "command": "just check",
       "lane": "check",
       "purpose": "verify the local CI helper scripts parse and stay reproducible"
+    },
+    "schemas/": {
+      "command": "just contract-drift && just repair-receipt-contract",
+      "lane": "contract-drift",
+      "purpose": "verify closed evidence schemas and hostile receipt validation"
     },
     "crates/": {
       "command": "just check",

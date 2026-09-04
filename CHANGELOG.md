@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add bounded locked package-only compile, test, and coverage feedback.
+- Add create-once exact-source repair receipts with replay, path, link,
+  evidence, source-identity, schema, canonical-content, and replacement-race
+  hostiles.
+- Produce direct governed proof, security/SBOM, coverage, contract, witness,
+  duplication, and ratchet evidence before the final score audit.
+- Document the real no-database and no-paid-runtime boundary without inventing
+  product migrations or spend state.
+
+## Unreleased
+
 ### Changed
 
 - Made the exact `git.neverhuman.org` HTTPS repository identity authoritative

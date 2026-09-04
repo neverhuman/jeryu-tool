@@ -68,16 +68,29 @@ score output, and build caches are disposable evidence or acceleration only.
 No test or release may depend on a compile-time path retained from a deleted
 sandbox.
 
+This control plane owns no database, migration stream, paid API, or durable
+product record. Its data inputs are the reviewed TOML manifests, task files,
+policies, and immutable Git identities named above. Writes are limited to
+generated consumers and content-addressed evidence under explicit locks; a
+failed write is stopped and retried from authenticated source bytes. Installer
+rollback custody is an artifact boundary, not a second data store. Diagnostic
+jobs are resource-bounded and have no billable network call or public service
+kill switch because no such runtime exists here.
+
 Generated pin blocks carry explicit begin/end markers. Change the manifest and
 run the renderer; do not hand-edit generated consumers. Renderer drift is a
 failing `just fast` result, not a reason to broaden custody or bypass a consumer.
 
 ## Proof routing and failure model
 
-`just fast` proves manifest and generated-consumer agreement. `just check`
+`just fast` proves manifest and generated-consumer agreement. `just fast-proof`
+and `just fast-test` provide bounded, locked package-only feedback using the
+governed compiler cache. `just check`
 proves custody, schemas, tests, warnings-denied Clippy, and shell entrypoints.
-`just score` runs the governed audit. `just security` runs repository security
-checks. The complete contract is `just`.
+`just tool-adoption` produces changed-surface, security, coverage, contract,
+witness, duplication, and ratchet evidence before `just score` consumes it.
+`just security` runs repository security checks and creates a source SBOM. The
+complete merge-blocking contract is `just required` (also the default `just`).
 
 Control failures expose `purpose`, `reason`, common fixes, `docs_url`, and
 `repair_hint`. Missing authority, stale refs, dirty state, malformed receipts,
