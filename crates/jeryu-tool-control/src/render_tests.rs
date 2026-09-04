@@ -1,3 +1,4 @@
+use super::auth::{canonical_askpass_prompt, read_token_file_with_hook};
 use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
