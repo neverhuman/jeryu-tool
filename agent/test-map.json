@@ -116,8 +116,8 @@
       "purpose": "verify the local CI helper scripts parse and stay reproducible"
     },
     "schemas/": {
-      "command": "just contract-drift && just repair-receipt-contract",
-      "lane": "contract-drift",
+      "command": "just repair-proof",
+      "lane": "repair-proof",
       "purpose": "verify closed evidence schemas and hostile receipt validation"
     },
     "crates/": {
