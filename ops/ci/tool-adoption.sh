@@ -63,7 +63,7 @@ bash ops/ci/contract-drift.sh
 
 # Produce an explicit full baseline and independently replay it in ratchet mode.
 jankurai audit . --full --mode advisory --policy agent/audit-policy.toml --json target/jankurai/accepted-baseline.json --md target/jankurai/accepted-baseline.md --repair-queue-jsonl target/jankurai/repair-queue.jsonl --no-score-history
-jankurai audit . --mode ratchet --baseline target/jankurai/accepted-baseline.json --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md --repair-queue-jsonl target/jankurai/repair-queue.jsonl --no-score-history
+jankurai audit . --full --mode ratchet --baseline target/jankurai/accepted-baseline.json --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md --repair-queue-jsonl target/jankurai/repair-queue.jsonl --no-score-history
 
 jq -e '.decision.hard_findings == 0 and (.caps_applied | length) == 0' \
   target/jankurai/repo-score.json >/dev/null
