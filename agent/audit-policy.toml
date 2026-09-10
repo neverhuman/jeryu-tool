@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+workspace = "jeryu-tool"
+# Candidate repository admission requires at least 85 with zero hard findings
+# and caps. Released tool-manifest profiles await their separate protected
+# migration; this repository policy imposes the stronger candidate requirement.
+minimum_score = 85
+hard_findings_allowed = 0
+required_tool = "jankurai"
+required_tool_version = "1.6.11"
+
+[scan]
+excluded_paths = [
+  ".jankurai/",
+  "generated/",   # generated pin env; rendered from tool-manifest.toml, not authored
+]
+
+# `deprecated` is a closed wire value in tools-registry.toml and its Rust
+# validator. It is not a process marker or an unfinished implementation.
+[dead_language]
+allow_terms = ["deprecated"]
