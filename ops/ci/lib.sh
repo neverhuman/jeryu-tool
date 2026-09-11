@@ -242,3 +242,17 @@ jankurai() {
   require_jankurai || return 1
   command "${JERYU_GOVERNED_JANKURAI_BIN}" "$@"
 }
+
+# Public GitHub checkouts have no closed vendor. Host stays --offline.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  cargo() {
+    local -a args=()
+    local arg
+    for arg in "$@"; do
+      [[ "$arg" == --offline ]] && continue
+      args+=("$arg")
+    done
+    command cargo "${args[@]}"
+  }
+  export -f cargo
+fi
