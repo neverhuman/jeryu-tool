@@ -63,10 +63,11 @@ jobs:
           scripts/ci-doctor.sh
       - name: Locked Rust control tools
         run: |
-          cargo test --locked --offline --all-targets
+          # Public GitHub checkout has no closed vendor; host keeps --offline.
+          cargo test --locked --all-targets
           bash ops/registry-summary.sh --check
       - name: Security lane
-        run: bash ops/ci/security.sh
+        run: bash ops/ci/security-public-mirror.sh
       - name: Jankurai audit lane
         run: bash ops/ci/score.sh
   security:
@@ -77,4 +78,4 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
       - name: Secret scan, dependency policy, and workflow lint
-        run: bash ops/ci/security.sh
+        run: bash ops/ci/security-public-mirror.sh
