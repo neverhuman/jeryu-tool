@@ -1,0 +1,24 @@
+name: diagnostic-security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnostic-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    name: gitleaks-dependency-review-actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - name: Public-mirror workflow lint
+        run: bash ops/ci/security-public-mirror.sh

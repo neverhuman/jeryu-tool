@@ -16,7 +16,7 @@ their canonical home repos and the discovery lives in `jeryu-tool-finder`.
 |---|---|
 | `tools-registry.toml` | The single source of truth for reusable tools: one `[[tool]]` per tool, with adoption and LOC-saved bookkeeping. |
 | `tasks/NNNN-*.toml` | The build queue. One file per "build this tool / migrate these repos" task. |
-| `ops/registry_summary.py` | Validates both of the above and computes the golden-box summary. `--check` is wired into `just check`. |
+| `ops/registry-summary.sh` | Runs the locked Rust validator for both inputs and computes the golden-box summary. `--check` is wired into `just check`. |
 
 ## The loop
 
@@ -74,7 +74,7 @@ duplication*, not net diff.
 
 ## Summary surface
 
-`ops/registry_summary.py` (and the forge handler
+`ops/registry-summary.sh` (and the forge handler
 `GET /api/v1/tools/registry/summary`) aggregate the registry into:
 `tool_count`, per-status counts, distinct `adopting_repo_count` /
 `candidate_repo_count`, `open_task_count`, and `realized_loc_saved` /
