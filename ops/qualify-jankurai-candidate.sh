@@ -60,6 +60,7 @@ cp "${receipt}" "${evidence_receipt}"
 env_file="${evidence_dir}/${receipt_sha}.env"
 {
   printf 'export JERYU_JANKURAI_BIN=%q\n' "${candidate_root}/bin/jankurai"
+  printf 'export JERYU_GOVERNED_JANKURAI_BIN=%q\n' "${candidate_root}/bin/jankurai"
   printf 'export JERYU_JANKURAI_RECEIPT=%q\n' "${evidence_receipt}"
   printf 'export JERYU_JANKURAI_ALLOW_TEST_RECEIPT=1\n'
 } > "${env_file}"

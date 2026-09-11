@@ -3,16 +3,20 @@ workspace = "jeryu-tool"
 profile = "public-portal"
 required_check = "jeryu-tool/required"
 
+[stack]
+id = "jeryu-tool-control-plane"
+version = "5.1.0"
+
+[queues]
+adapter_paths = []
+event_contract_paths = []
+generated_type_paths = []
+client_markers = []
+
 [split]
 cross_repo_dependency_policy = "pinned-public-git-tags"
 local_path_patches = false
 
 cargo_members = [
-
+  "crates/jeryu-tool-control",
 ]
-
-[python]
-# The manifest generator/installer are CI tooling, not product truth or a DB:
-# render_tool_manifest.py only rewrites the family's pinned consumers from
-# tool-manifest.toml (the source of truth), and emits the generated pin env.
-allowed_non_product_paths = ["ops/"]

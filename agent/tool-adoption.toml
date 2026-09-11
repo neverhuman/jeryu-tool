@@ -18,3 +18,57 @@ mode = "auto"
 [[tools]]
 id = "git-bad-behavior" # no destructive git automation in this repo
 mode = "auto"
+
+[[tools]]
+id = "proof-routing"
+mode = "auto"
+
+[[tools]]
+id = "proofbind"
+mode = "auto"
+
+[[tools]]
+id = "proofmark-rust"
+mode = "auto"
+
+[[tools]]
+id = "copy-code"
+mode = "auto"
+
+[[tools]]
+id = "release-bad-behavior"
+mode = "auto"
+
+[[tools]]
+id = "contract-drift"
+mode = "auto"
+
+[[tools]]
+id = "rust-witness"
+mode = "auto"
+
+[[tools]]
+id = "authz-matrix"
+mode = "auto"
+
+[[tools]]
+id = "input-boundary"
+mode = "auto"
+
+[[tools]]
+id = "agent-tool-supply"
+mode = "auto"
+
+[[tools]]
+id = "release-readiness"
+mode = "auto"
+
+# This repository has no paid API, hosted service, or unbounded billable job.
+# CI has explicit ten-minute job timeouts, so a spend-budget tool is inapplicable.
+[[tools]]
+id = "cost-budget"
+mode = "disabled"
+
+[[tools]]
+id = "coverage-evidence"
+mode = "auto"
