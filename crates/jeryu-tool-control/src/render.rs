@@ -1,7 +1,7 @@
 use crate::pin::Pin;
 use crate::render_rules::{
-    ManifestAuthority, RenderContext, ensure_script, regex, render_consumer, require_function,
-    sandbox_receipt,
+    AuthorityKind, ManifestAuthority, RenderContext, ensure_script, neutralize_candidate_authority,
+    regex, render_consumer, require_function, sandbox_receipt,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -35,6 +35,7 @@ use storage::*;
 #[derive(Default)]
 struct Args {
     check: bool,
+    candidate: bool,
     repos: Vec<String>,
     roots: Vec<String>,
     heads: Vec<String>,
@@ -47,6 +48,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     while index < args.len() {
         match args[index].as_str() {
             "--check" => parsed.check = true,
+            "--candidate" => parsed.candidate = true,
             "--repo" | "--repo-root" | "--expected-head" | "--family-root" => {
                 let flag = &args[index];
                 index += 1;
@@ -75,6 +77,17 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
 
 pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
     let mut args = parse_args(raw_args)?;
+    // Candidate qualification is check-only: a write, an installation, or a
+    // receipt must carry real protected-main authority.
+    if args.candidate && !args.check {
+        return Err("--candidate is valid only with --check".to_owned());
+    }
+    // A release renders from protected main, never from a candidate head.
+    if args.candidate && env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1") {
+        return Err(
+            "--candidate is refused in release CI: releases render from protected main".to_owned(),
+        );
+    }
     if args.repos.is_empty() && !args.check {
         args.check = true;
         eprintln!(
@@ -237,8 +250,10 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
         validate_write_targets(&repository_targets)?;
     }
 
-    let authority = manifest_authority(tool_root, !args.check)?;
+    let authority = manifest_authority(tool_root, !args.check, args.candidate && args.check)?;
+    let candidate = authority.kind == AuthorityKind::Candidate;
     let receipt = sandbox_receipt(&pin, &authority)?;
+    let authority_commit = authority.commit.clone();
     let context = RenderContext {
         authority,
         image_receipt_sha256: sha256_bytes(receipt.as_bytes())?,
@@ -264,6 +279,14 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
             let original = fs::read_to_string(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
             let rendered = render_consumer(path, &pin, &function, &context)?;
+            let (rendered, original) = if candidate {
+                (
+                    neutralize_candidate_authority(path, &rendered),
+                    neutralize_candidate_authority(path, &original),
+                )
+            } else {
+                (rendered, original)
+            };
             if rendered != original {
                 changed.push(path.clone());
                 if !args.check {
@@ -288,7 +311,17 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
         }
         return Ok(1);
     }
-    if args.check {
+    if args.check && candidate {
+        println!(
+            "jankurai identity candidate-qualified (NOT installed authority): {} sha256={}",
+            pin.get("version"),
+            pin.get("binary_sha256")
+        );
+        println!(
+            "  candidate head {} — authority-bound receipt fields are rendered after it lands on protected main",
+            authority_commit
+        );
+    } else if args.check {
         println!(
             "jankurai identity ok: {} sha256={}",
             pin.get("version"),

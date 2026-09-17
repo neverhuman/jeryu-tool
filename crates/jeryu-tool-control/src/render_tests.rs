@@ -310,3 +310,85 @@ fn rendered_changes_reject_hidden_index_state_without_mutating_bytes() {
 
     fs::remove_dir_all(root).expect("remove test root");
 }
+
+#[cfg(unix)]
+fn candidate_fixture(label: &str, manifest: &str) -> PathBuf {
+    // A fixture whose protected main carries one manifest and whose HEAD
+    // carries another: the exact shape of an open authority-move PR.
+    let root = test_root(label);
+    run_fixture_git(&root, &["init", "-q", "-b", "main"]);
+    run_fixture_git(&root, &["config", "user.name", "Jeryu Test"]);
+    run_fixture_git(&root, &["config", "user.email", "jeryu-test@invalid"]);
+    run_fixture_git(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://git.neverhuman.org/git/jeryu/jeryu-tool.git",
+        ],
+    );
+    fs::write(root.join("tool-manifest.toml"), "repo = \"landed\"\n")
+        .expect("write landed manifest");
+    run_fixture_git(&root, &["add", "tool-manifest.toml"]);
+    run_fixture_git(&root, &["commit", "-q", "-m", "landed"]);
+    let landed = git_local_output(&root, &["rev-parse", "HEAD"]).expect("landed head");
+    run_fixture_git(&root, &["update-ref", "refs/remotes/origin/main", &landed]);
+    fs::write(root.join("tool-manifest.toml"), manifest).expect("write candidate manifest");
+    root
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_authority_qualifies_a_committed_unlanded_manifest() {
+    let root = candidate_fixture("candidate-ok", "repo = \"candidate\"\n");
+    run_fixture_git(&root, &["add", "tool-manifest.toml"]);
+    run_fixture_git(&root, &["commit", "-q", "-m", "candidate"]);
+    let head = git_local_output(&root, &["rev-parse", "HEAD"]).expect("candidate head");
+
+    // Without the candidate lane the changed manifest still fails closed.
+    let refused = manifest_authority(&root, false, false).expect_err("must refuse by default");
+    assert!(refused.contains("must land on protected jeryu-tool main"));
+
+    let authority = manifest_authority(&root, false, true).expect("candidate qualification");
+    assert_eq!(authority.kind, AuthorityKind::Candidate);
+    assert_eq!(authority.commit, head);
+    fs::remove_dir_all(root).expect("remove test root");
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_authority_rejects_an_uncommitted_manifest() {
+    // A candidate is only as reviewable as the bytes a reviewer can fetch.
+    let root = candidate_fixture("candidate-dirty", "repo = \"working-tree-only\"\n");
+    let error = manifest_authority(&root, false, true).expect_err("dirty candidate must fail");
+    assert!(error.contains("must be committed at HEAD"));
+    fs::remove_dir_all(root).expect("remove test root");
+}
+
+#[cfg(unix)]
+#[test]
+fn landed_manifest_still_reports_protected_main_authority() {
+    // Stale or matching protected-main identity keeps the installed authority
+    // kind, so the candidate lane cannot mask a real drift.
+    let root = candidate_fixture("candidate-landed", "repo = \"landed\"\n");
+    let authority = manifest_authority(&root, false, true).expect("protected authority");
+    assert_eq!(authority.kind, AuthorityKind::ProtectedMain);
+    fs::remove_dir_all(root).expect("remove test root");
+}
+
+#[test]
+fn candidate_flag_is_rejected_outside_check_mode() {
+    // Installation and receipt rendering never accept a candidate.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let error = run(
+        &root,
+        &[
+            "--candidate".to_owned(),
+            "--repo".to_owned(),
+            "jeryu-tool".to_owned(),
+        ],
+    )
+    .expect_err("candidate write must fail closed");
+    assert!(error.contains("--candidate is valid only with --check"));
+}

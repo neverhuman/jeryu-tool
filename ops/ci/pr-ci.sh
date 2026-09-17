@@ -93,7 +93,7 @@ printf '[pr-ci] jankurai mode=%s bin=%s receipt=%s receipt_sha256=%s\n' \
 # The manifest PR proves its own generated consumers first. After each protected
 # consumer lands, the release lane runs the unscoped family check over canonical mains.
 echo "[pr-ci] jankurai pin drift check (manifest-owner self scope)" >&2
-bash ops/render-tool-manifest.sh --check --repo jeryu-tool
+bash ops/render-tool-manifest.sh --check --candidate --repo jeryu-tool
 
 echo "[pr-ci] standard lanes" >&2
 bash ops/ci/fast.sh

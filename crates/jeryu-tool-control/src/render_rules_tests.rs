@@ -6,6 +6,7 @@ fn fixture_context() -> RenderContext {
             commit: "a".repeat(40),
             tree: "b".repeat(40),
             sha256: "c".repeat(64),
+            kind: AuthorityKind::ProtectedMain,
         },
         image_receipt_sha256: "d".repeat(64),
     }

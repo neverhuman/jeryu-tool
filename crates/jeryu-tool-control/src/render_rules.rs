@@ -20,6 +20,76 @@ pub(crate) struct ManifestAuthority {
     pub commit: String,
     pub tree: String,
     pub sha256: String,
+    pub kind: AuthorityKind,
+}
+
+/// Where a rendered identity claims its authority comes from.
+///
+/// `ProtectedMain` is the only authority an installation or a receipt may
+/// carry. `Candidate` exists so a changed `tool-manifest.toml` can be
+/// qualified before it lands, without claiming it is already installed
+/// protected-main authority; it is check-only and never written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthorityKind {
+    ProtectedMain,
+    Candidate,
+}
+
+/// Placeholder standing in for the three receipt fields that only the landed
+/// merge commit can fix. Comparing both sides with these neutralized keeps a
+/// candidate check honest about everything else in the rendered bytes.
+pub(crate) const CANDIDATE_AUTHORITY_COMMIT: &str = "candidate-manifest-commit-not-yet-landed";
+
+/// Neutralize the authority-bound fields of one rendered consumer so a
+/// candidate check compares only what a pre-merge head can already determine.
+pub(crate) fn neutralize_candidate_authority(path: &Path, text: &str) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let rel = path.to_string_lossy();
+    if name == "jankurai-installation-receipt.json" && rel.contains("agent-sandbox") {
+        let Ok(mut receipt) = serde_json::from_str::<serde_json::Value>(text) else {
+            return text.to_owned();
+        };
+        if let Some(governance) = receipt
+            .get_mut("governance")
+            .and_then(|v| v.as_object_mut())
+        {
+            for field in ["manifest_commit", "manifest_tree", "manifest_sha256"] {
+                if governance.contains_key(field) {
+                    governance.insert(
+                        field.to_owned(),
+                        serde_json::Value::String(CANDIDATE_AUTHORITY_COMMIT.to_owned()),
+                    );
+                }
+            }
+        }
+        return serde_json::to_string_pretty(&receipt)
+            .map(|text| format!("{text}\n"))
+            .unwrap_or_else(|_| text.to_owned());
+    }
+    if name == "test-governed-jankurai.sh" {
+        let mut out = replace_hex_on_marked_line(
+            text,
+            ".governance.manifest_commit",
+            40,
+            CANDIDATE_AUTHORITY_COMMIT,
+        );
+        out = replace_hex_on_marked_line(
+            &out,
+            ".governance.manifest_tree",
+            40,
+            CANDIDATE_AUTHORITY_COMMIT,
+        );
+        return replace_hex_on_marked_line(
+            &out,
+            ".governance.manifest_sha256",
+            64,
+            CANDIDATE_AUTHORITY_COMMIT,
+        );
+    }
+    text.to_owned()
 }
 
 #[derive(Debug, Clone)]

@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn manifest_authority(
     tool_root: &Path,
     authenticated: bool,
+    allow_candidate: bool,
 ) -> Result<ManifestAuthority, String> {
     let contract_base_ref = env::var("JAIN_CONTRACT_BASE_REF").ok();
     let release_ci = env::var("JAIN_RELEASE_CI").ok().as_deref() == Some("1");
@@ -18,10 +19,17 @@ pub(super) fn manifest_authority(
     let object = format!("{commit}:tool-manifest.toml");
     let protected_manifest = git_local_output_bytes(tool_root, &["show", &object])?;
     if manifest != protected_manifest {
-        return Err(
-            "tool-manifest.toml must land on protected jeryu-tool main before sandbox receipt rendering"
-                .to_owned(),
-        );
+        // A changed manifest is never installed authority. Only the check lane
+        // may qualify it, and only as a candidate bound to its own committed
+        // head, so an unlanded manifest can be reviewed without claiming it is
+        // already protected-main authority.
+        if !allow_candidate {
+            return Err(
+                "tool-manifest.toml must land on protected jeryu-tool main before sandbox receipt rendering"
+                    .to_owned(),
+            );
+        }
+        return candidate_authority(tool_root, &manifest);
     }
     let tree_object = format!("{commit}^{{tree}}");
     let tree = git_local_output(tool_root, &["rev-parse", &tree_object])?;
@@ -32,6 +40,38 @@ pub(super) fn manifest_authority(
         commit,
         tree,
         sha256: sha256_bytes(&protected_manifest)?,
+        kind: AuthorityKind::ProtectedMain,
+    })
+}
+
+/// Qualify an unlanded `tool-manifest.toml` against the head that carries it.
+///
+/// The manifest must already be committed at HEAD: a candidate is only as
+/// reviewable as the exact bytes a reviewer can fetch, so a dirty working tree
+/// is refused rather than qualified.
+fn candidate_authority(tool_root: &Path, manifest: &[u8]) -> Result<ManifestAuthority, String> {
+    let commit = git_local_output(tool_root, &["rev-parse", "HEAD"])?;
+    if !regex("^[0-9a-f]{40}$").is_match(&commit) {
+        return Err("renderer could not resolve a candidate head commit".to_owned());
+    }
+    let object = format!("{commit}:tool-manifest.toml");
+    let head_manifest = git_local_output_bytes(tool_root, &["show", &object])?;
+    if manifest != head_manifest {
+        return Err(
+            "candidate tool-manifest.toml must be committed at HEAD before it can be qualified"
+                .to_owned(),
+        );
+    }
+    let tree_object = format!("{commit}^{{tree}}");
+    let tree = git_local_output(tool_root, &["rev-parse", &tree_object])?;
+    if !regex("^[0-9a-f]{40}$").is_match(&tree) {
+        return Err("renderer resolved malformed candidate manifest tree".to_owned());
+    }
+    Ok(ManifestAuthority {
+        commit,
+        tree,
+        sha256: sha256_bytes(manifest)?,
+        kind: AuthorityKind::Candidate,
     })
 }
 

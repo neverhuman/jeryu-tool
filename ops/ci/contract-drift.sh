@@ -24,6 +24,6 @@ jq -e '.properties.repository.const == "jeryu/jeryu-tool" and
   schemas/artifact-support.schema.json >/dev/null
 jq -e '.properties.schema_version.const == "jeryu.tool.security/v1"' \
   schemas/security-evidence.schema.json >/dev/null
-bash ops/render-tool-manifest.sh --check --repo jeryu-tool
+bash ops/render-tool-manifest.sh --check --candidate --repo jeryu-tool
 bash ops/registry-summary.sh --check >/dev/null
 printf 'contract drift ok: closed schemas, manifest pin, and registry\n'
