@@ -1,5 +1,18 @@
 # Changelog
 
+## jeryu-tool-v5.1.0-split.6 — 2026-09-17
+
+### Changed
+- Moved the governed Jankurai install authority from the retired loopback
+  forge to `git.neverhuman.org`: the pinned source is
+  `https://git.neverhuman.org/git/jeryu/jankurai.git` (same tag, commit, tree,
+  and archive digest), the installer binds receipts to the hosted
+  `jeryu/jeryu-tool` manifest, and immutable-main protection is read back over
+  HTTPS from the hosted forge.
+- Receipt gates accept either the hosted or the legacy loopback manifest
+  repository during the transition, so hosts keep passing until each is
+  re-installed; the installer writes only the hosted authority.
+
 ## Unreleased
 
 - Add bounded locked package-only compile, test, and coverage feedback.

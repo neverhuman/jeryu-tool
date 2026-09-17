@@ -149,8 +149,13 @@ require_jankurai() {
          "local-forge-source-plus-closed-vendor-network-none" and
        .build.no_proxy == "127.0.0.1,localhost,::1" and
        .governance.status == $governance and
-       .governance.manifest_repo ==
-         "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git" and
+       # Transition: receipts installed before the hosted-forge authority move
+       # name the retired loopback forge; drop that value once every governed
+       # host carries a hosted-authority receipt.
+       (.governance.manifest_repo ==
+          "https://git.neverhuman.org/git/jeryu/jeryu-tool.git" or
+        .governance.manifest_repo ==
+          "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git") and
        (.governance.manifest_commit | test("^[0-9a-f]{40}$")) and
        (.governance.manifest_tree | test("^[0-9a-f]{40}$")) and
        (.governance.manifest_sha256 | test("^[0-9a-f]{64}$")) and

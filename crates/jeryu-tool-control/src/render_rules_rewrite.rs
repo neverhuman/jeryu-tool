@@ -146,7 +146,7 @@ pub(super) fn replace_workflow_pin(text: &str, pin: &Pin) -> String {
 
 pub(crate) fn semantic_identity_rules(text: &str, pin: &Pin) -> String {
     let text = regex(
-        r"(?:https://github\.com/neverhuman/jankurai\.git|http://127\.0\.0\.1:8787/git/jeryu/jankurai\.git)",
+        r"(?:https://github\.com/neverhuman/jankurai\.git|http://127\.0\.0\.1:8787/git/jeryu/jankurai\.git|https://git\.neverhuman\.org/git/jeryu/jankurai\.git)",
     )
     .replace_all(text, pin.get("repo"));
     let text = regex(r"\bv\d+\.\d+\.\d+-deadlang-precision(?:-split\.\d+)?\b")

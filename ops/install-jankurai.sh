@@ -60,7 +60,7 @@ required_pin_vars=(
 for name in "${required_pin_vars[@]}"; do
   [[ -n "${!name:-}" ]] || die "generated pin is missing ${name}"
 done
-[[ "${JANKURAI_REPO}" == "http://127.0.0.1:8787/git/jeryu/jankurai.git" ]] ||
+[[ "${JANKURAI_REPO}" == "https://git.neverhuman.org/git/jeryu/jankurai.git" ]] ||
   die "unapproved Jankurai source: ${JANKURAI_REPO}"
 [[ "${JANKURAI_TAG}" != "v1.6.11-deadlang-precision" ]] ||
   die "burned historical tag is not a release source"
@@ -306,7 +306,7 @@ forge_git() {
 # from the forge. Candidate qualification records the same Git identity but is
 # explicitly diagnostic and cannot be mistaken for governed installation.
 manifest_root="$(realpath -m "${here}/..")"
-manifest_repo="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
+manifest_repo="https://git.neverhuman.org/git/jeryu/jeryu-tool.git"
 manifest_commit="$(git -C "${manifest_root}" rev-parse HEAD)"
 manifest_tree="$(git -C "${manifest_root}" rev-parse 'HEAD^{tree}')"
 manifest_sha256="$(sha256_file "${manifest_root}/tool-manifest.toml")"
@@ -325,9 +325,9 @@ if [[ "${test_mode}" != "1" ]]; then
     awk '$2 == "refs/heads/main" {print $1; exit}')"
   [[ "${manifest_remote_main}" == "${manifest_commit}" ]] ||
     die "jeryu-tool manifest checkout is not exact protected main"
-  protection_readback="$(curl -fsS --max-time 15 --max-redirs 0 --proto '=http' \
+  protection_readback="$(curl -fsS --max-time 15 --max-redirs 0 --proto '=https' \
     -H 'accept: application/json' -H "authorization: Bearer ${forge_token}" \
-    'http://127.0.0.1:8787/repos/jeryu/jeryu-tool/branches/main/protection')" ||
+    'https://git.neverhuman.org/repos/jeryu/jeryu-tool/branches/main/protection')" ||
     die "unable to read back jeryu-tool branch protection"
   jq -e --arg check "jeryu-tool/required" '
     ((if (.required_status_checks | type) == "array" then .required_status_checks

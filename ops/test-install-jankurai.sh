@@ -437,7 +437,7 @@ if env JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="${offline_root}" \
   JERYU_PIN_ENV="${offline_pin}" JERYU_INSTALL_TEST_GIT_BIN="${offline_git}" \
   JERYU_OFFLINE_TEST_REAL_GIT="${real_git}" \
   JERYU_OFFLINE_TEST_SOURCE="${offline_source}" \
-  JERYU_OFFLINE_TEST_CANONICAL="http://127.0.0.1:8787/git/jeryu/jankurai.git" \
+  JERYU_OFFLINE_TEST_CANONICAL="https://git.neverhuman.org/git/jeryu/jankurai.git" \
   JERYU_CARGO_CACHE_SEED="${tmp}/empty-cargo" JERYU_RUN_ID="offline-test-$$" \
   bash "${installer}" >"${tmp}/offline.log" 2>&1; then
   fail "offline fetch test unexpectedly succeeded"

@@ -132,7 +132,7 @@ jq -n \
       network_scope:"local-forge-source-plus-closed-vendor-network-none",
       no_proxy:"127.0.0.1,localhost,::1"},
     governance:{status:"governed",
-      manifest_repo:"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git",
+      manifest_repo:"https://git.neverhuman.org/git/jeryu/jeryu-tool.git",
       manifest_commit:("a"*40),manifest_tree:("b"*40),
       manifest_sha256:("c"*64),protected_main:true,
       protection_policy:"immutable-main-v1"},

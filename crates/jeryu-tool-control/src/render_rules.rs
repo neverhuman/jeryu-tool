@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const MANIFEST_REPO: &str = "http://127.0.0.1:8787/git/jeryu/jeryu-tool.git";
+const MANIFEST_REPO: &str = "https://git.neverhuman.org/git/jeryu/jeryu-tool.git";
 const SANDBOX_JANKURAI_PATH: &str = "/opt/rust/cargo/bin/jankurai";
 const SANDBOX_RECEIPT_ROOT: &str = "/opt/jeryu/receipts/jankurai/sha256";
 const CANONICAL_JANKURAI_WRAPPER: &str = r#"jankurai() {
