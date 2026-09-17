@@ -53,12 +53,11 @@ if [[ "${JAIN_RELEASE_CI:-0}" == "1" ]]; then
   source ops/ci/lib.sh
   require_jankurai
   qualification_mode="release-broker"
-elif [[ "${host_version}" == "${JERYU_JANKURAI_VERSION}" &&
-        "${host_sha}" == "${JERYU_JANKURAI_SHA256}" ]]; then
-  source ops/ci/lib.sh
-  require_jankurai
-  qualification_mode="receipt-bound-host"
 else
+  # Premerge: a host binary that merely matches the pin digest is not
+  # installed authority. Those receipts name protected main, which this
+  # candidate has not landed on. Qualify --candidate instead. The
+  # receipt-bound host path stays behind JAIN_RELEASE_CI=1.
   if [[ "${JERYU_TOOL_REQUIRE_GOVERNED_HOST:-0}" == "1" ]]; then
     printf 'governed-host Jankurai required: version=%s sha256=%s\n' \
       "${host_version:-missing}" "${host_sha:-missing}" >&2
