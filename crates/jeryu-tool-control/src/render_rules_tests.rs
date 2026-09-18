@@ -241,3 +241,22 @@ fn jankurai_wrapper_rejects_ambiguous_or_unbound_execution() {
         );
     }
 }
+
+#[test]
+fn ci_bridge_manifest_repo_is_rendered_to_the_hosted_authority() {
+    // The authority move once left this constant on the retired loopback
+    // forge because the renderer did not manage it, and the forge compares
+    // the receipt's manifest_repo against it exactly.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pin = Pin::load(&root).expect("canonical pin");
+    let context = fixture_context();
+    let rust = concat!(
+        "const GOVERNED_JANKURAI_MANIFEST_REPO: &str = ",
+        "\"http://127.0.0.1:8787/git/jeryu/jeryu-tool.git\";\n",
+    );
+    let rendered = replace_ci_bridge_constants(rust, &pin, &context);
+    assert!(rendered.contains(
+        "const GOVERNED_JANKURAI_MANIFEST_REPO: &str = \"https://git.neverhuman.org/git/jeryu/jeryu-tool.git\";"
+    ));
+    assert!(!rendered.contains("127.0.0.1:8787"));
+}

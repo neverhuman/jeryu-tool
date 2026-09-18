@@ -265,6 +265,9 @@ pub(super) fn replace_ci_bridge_constants(
         rendered = replace_rust_string_constant(&rendered, name, pin.get(key));
     }
     for (name, value) in [
+        // The forge compares the receipt's manifest_repo exactly, so the
+        // authority repository is rendered with the rest of the identity.
+        ("GOVERNED_JANKURAI_MANIFEST_REPO", super::MANIFEST_REPO),
         (
             "GOVERNED_JANKURAI_MANIFEST_COMMIT",
             context.authority.commit.as_str(),
