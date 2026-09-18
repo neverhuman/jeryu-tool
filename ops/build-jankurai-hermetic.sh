@@ -13,6 +13,25 @@ sha256_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 
+# BEGIN verify_builder_image
+# The builder is identified by its registry repository digest, the content
+# address `docker pull` verifies. The local image ID is not portable: the
+# containerd image store reports the manifest digest, the classic overlay2 store
+# reports the config digest, so the same pinned image has two IDs. Gating on
+# the ID made the governed build reproducible only on containerd-store hosts.
+verify_builder_image() {
+  local docker_bin="$1" image="$2" digests
+  [[ "${image}" =~ ^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+    die "pinned builder image is not a repository digest reference"
+  digests="$("${docker_bin}" image inspect \
+    --format '{{range .RepoDigests}}{{println .}}{{end}}' "${image}")" ||
+    die "pinned builder image is unavailable"
+  local short="${image#docker.io/library/}"
+  grep -Fx -e "${short}" -e "docker.io/library/${short}" <<<"${digests}" >/dev/null ||
+    die "builder image repository digest mismatch"
+}
+# END verify_builder_image
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pin_env="${JERYU_PIN_ENV:-${here}/../generated/jankurai-pin.env}"
 source_root="${1:-}"
@@ -91,13 +110,7 @@ docker_bin="/usr/bin/docker"
   die "container engine is not the governed /usr/bin/docker"
 [[ "$(stat -c '%a:%u:%g:%h' "${docker_bin}")" == "755:0:0:1" ]] ||
   die "container engine custody mismatch"
-actual_image_id="$("${docker_bin}" image inspect --format '{{.Id}}' \
-  "${JANKURAI_BUILDER_IMAGE}")" || die "pinned builder image is unavailable"
-[[ "${actual_image_id}" == "${JANKURAI_BUILDER_IMAGE_ID}" ]] ||
-  die "builder image ID mismatch"
-"${docker_bin}" image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-  "${JANKURAI_BUILDER_IMAGE}" | grep -Fx "${JANKURAI_BUILDER_IMAGE}" >/dev/null ||
-  die "builder image repository digest mismatch"
+verify_builder_image "${docker_bin}" "${JANKURAI_BUILDER_IMAGE}"
 
 sed 's#^directory = ".*"$#directory = "/opt/jeryu/vendor"#' \
   "${scratch}/vendor-config.raw" >"${scratch}/cargo-config.toml"
