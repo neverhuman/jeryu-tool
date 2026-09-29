@@ -80,6 +80,11 @@
       "lane": "repair-receipt-contract",
       "purpose": "prove create-once exact-source evidence and pathname custody"
     },
+    "ops/ci/score-report.sh": {
+      "command": "just score-report-contract",
+      "lane": "score-report-contract",
+      "purpose": "prove the gate rejects hard findings hidden behind a clean advisory summary"
+    },
     "ops/ci/proof-routing.sh": {
       "command": "just proof-routing",
       "lane": "proof-routing",

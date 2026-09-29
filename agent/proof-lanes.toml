@@ -64,6 +64,11 @@ command = "just repair-receipt-contract"
 purpose = "prove create-once exact-source repair evidence custody"
 
 [[lane]]
+name = "score-report-contract"
+command = "just score-report-contract"
+purpose = "prove score-report rejects caps, hard findings and policy drift"
+
+[[lane]]
 name = "repair-proof"
 command = "just repair-proof"
 purpose = "rerun contract diagnostics and repair-receipt hostiles"

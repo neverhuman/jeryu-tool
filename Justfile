@@ -43,9 +43,13 @@ contract-drift:
 repair-receipt-contract:
   ./ops/ci/repair-receipt-test.sh
 
+score-report-contract:
+  ./ops/ci/score-report-test.sh
+
 repair-proof:
   ./ops/ci/contract-drift.sh
   ./ops/ci/repair-receipt-test.sh
+  ./ops/ci/score-report-test.sh
 
 artifact-support:
   ./ops/ci/artifact_support.sh

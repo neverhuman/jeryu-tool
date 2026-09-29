@@ -27,5 +27,6 @@ for script in "${shell_scripts[@]}"; do
   shellcheck --severity=warning --external-sources "$script"
 done
 jq empty agent/*.json schemas/*.json
+bash ops/ci/score-report-test.sh
 bash ops/test-doctor-controls.sh
 printf 'check ok: %s\n' "$(pwd)"
