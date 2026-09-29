@@ -3,10 +3,78 @@ mod registry;
 mod render;
 mod render_rules;
 
+use clap::{ColorChoice, Parser, Subcommand};
 use std::env;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+/// Typed control plane for the governed jankurai toolchain and the
+/// reusable-tool registry.
+///
+/// The binary has one hidden mode that is not a subcommand: when
+/// `JERYU_TOOL_GIT_ASKPASS=1` is set in the environment, the process acts as
+/// git's `GIT_ASKPASS` helper instead. It then takes exactly one argument, the
+/// credential prompt git itself emits, answers it from the file named by
+/// `JERYU_FORGE_TOKEN_FILE`, and refuses every prompt that is not for a
+/// canonical family remote. The renderer sets that mode on itself while
+/// fetching; nothing else should invoke it.
+#[derive(Debug, Parser)]
+#[command(
+    name = "jeryu-toolctl",
+    version,
+    about = "Typed Jeryu tool registry and governed manifest control plane",
+    color = ColorChoice::Never,
+    disable_help_subcommand = true
+)]
+struct Cli {
+    /// Path to the jeryu-tool checkout the command reads its manifests from.
+    #[arg(long, value_name = "PATH")]
+    tool_root: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Print the require-jankurai verifier with the current pin baked in.
+    ///
+    /// The emitted script is the static `ops/render-assets/require-jankurai.sh`
+    /// template plus a generated pin block. Consumers install what this prints;
+    /// they never hand-edit it. Takes no arguments and writes to stdout.
+    EmitEnsureScript,
+    /// Validate `tools-registry.toml` and `tasks/`, then report the summary.
+    ///
+    /// Without `--check` the whole summary is printed as JSON, which is what
+    /// the forge reads. With `--check` only the one-line verdict is printed;
+    /// either way an invalid registry or task file fails the command.
+    RegistrySummary {
+        /// Print the one-line verdict instead of the JSON summary.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Render the governed jankurai identity into its claimed consumers.
+    RenderToolManifest {
+        /// Validate the rendered bytes without writing them.
+        #[arg(long)]
+        check: bool,
+        /// Qualify a candidate head instead of protected main; requires `--check`.
+        #[arg(long)]
+        candidate: bool,
+        /// Canonical repository to render into; repeat to select several.
+        #[arg(long = "repo", value_name = "NAME")]
+        repos: Vec<String>,
+        /// Physical checkout for one repository, as `canonical-name=/absolute/path`.
+        #[arg(long = "repo-root", value_name = "NAME=PATH")]
+        roots: Vec<String>,
+        /// Head one repository must already be at, as `canonical-name=SHA`.
+        #[arg(long = "expected-head", value_name = "NAME=SHA")]
+        heads: Vec<String>,
+        /// Directory holding the family checkouts; defaults to the tool root's parent.
+        #[arg(long, value_name = "PATH")]
+        family_root: Option<PathBuf>,
+    },
+}
 
 #[derive(Debug, thiserror::Error)]
 enum ControlError {
@@ -36,8 +104,9 @@ impl ControlError {
                 common_fixes: &[
                     "pass --tool-root before the command",
                     "use --check for read-only validation",
+                    "run jeryu-toolctl --help for the accepted commands",
                 ],
-                docs_url: "docs/testing.md",
+                docs_url: "docs/toolctl.md",
                 repair_hint: "rerun the thin ops entrypoint with only its documented flags",
             },
             Self::Registry(_) => RepairHint {
@@ -65,39 +134,57 @@ impl ControlError {
     }
 }
 
-fn usage() -> &'static str {
-    "usage: jeryu-toolctl --tool-root PATH <registry-summary|render-tool-manifest> [ARGS...]"
+/// Parse the command line, letting `--help` and `--version` print and exit.
+///
+/// Every other clap rejection becomes a usage error so the agent-facing repair
+/// block is emitted for it like for any other refusal.
+fn parse() -> Result<Cli, ControlError> {
+    match Cli::try_parse() {
+        Ok(cli) => Ok(cli),
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) {
+                error.print().ok();
+                std::process::exit(0);
+            }
+            Err(ControlError::Usage(
+                error.render().to_string().trim_end().to_owned(),
+            ))
+        }
+    }
 }
 
 fn run() -> Result<i32, ControlError> {
-    let mut args = env::args().skip(1);
-    let Some(flag) = args.next() else {
-        return Err(ControlError::Usage(usage().to_owned()));
-    };
-    if flag != "--tool-root" {
-        return Err(ControlError::Usage(format!(
-            "expected --tool-root before command\n{}",
-            usage()
-        )));
-    }
-    let root =
-        PathBuf::from(args.next().ok_or_else(|| {
-            ControlError::Usage(format!("--tool-root requires a path\n{}", usage()))
-        })?);
-    let command = args
-        .next()
-        .ok_or_else(|| ControlError::Usage(usage().to_owned()))?;
-    let rest: Vec<String> = args.collect();
-    match command.as_str() {
-        "emit-ensure-script" => {
-            render::emit_ensure_script(&root, &rest).map_err(ControlError::Renderer)
+    let cli = parse()?;
+    let root = cli.tool_root;
+    match cli.command {
+        Command::EmitEnsureScript => {
+            render::emit_ensure_script(&root).map_err(ControlError::Renderer)
         }
-        "registry-summary" => registry::run(&root, &rest).map_err(ControlError::Registry),
-        "render-tool-manifest" => render::run(&root, &rest).map_err(ControlError::Renderer),
-        _ => Err(ControlError::Usage(format!(
-            "unknown command {command:?}\n{}",
-            usage()
-        ))),
+        Command::RegistrySummary { check } => {
+            registry::run(&root, check).map_err(ControlError::Registry)
+        }
+        Command::RenderToolManifest {
+            check,
+            candidate,
+            repos,
+            roots,
+            heads,
+            family_root,
+        } => render::run(
+            &root,
+            render::Args {
+                check,
+                candidate,
+                repos,
+                roots,
+                heads,
+                family_root,
+            },
+        )
+        .map_err(ControlError::Renderer),
     }
 }
 
@@ -132,7 +219,8 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::ControlError;
+    use super::{Cli, ControlError};
+    use clap::CommandFactory;
 
     #[test]
     fn every_control_error_has_closed_agent_repair_guidance() {
@@ -150,6 +238,31 @@ mod tests {
             assert!(repair.common_fixes.iter().all(|fix| !fix.is_empty()));
             assert!(repair.docs_url.starts_with("docs/"));
             assert!(repair.repair_hint.contains("run"));
+        }
+    }
+
+    #[test]
+    fn the_command_line_schema_is_internally_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn every_command_documents_itself() {
+        let command = Cli::command();
+        for subcommand in command.get_subcommands() {
+            assert!(
+                subcommand.get_about().is_some(),
+                "{} has no --help summary",
+                subcommand.get_name()
+            );
+            for argument in subcommand.get_arguments() {
+                assert!(
+                    argument.get_help().is_some(),
+                    "{} --{} has no --help summary",
+                    subcommand.get_name(),
+                    argument.get_id()
+                );
+            }
         }
     }
 }

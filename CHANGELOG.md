@@ -15,6 +15,12 @@
 
 ## Unreleased
 
+- Parse the `jeryu-toolctl` command line with clap, so `--help`, per-command
+  `--help`, and `--version` describe the accepted schema; a rejected command
+  line still prints the agent-facing repair block.
+- Document the control binary in `docs/toolctl.md`: every subcommand and flag,
+  including `emit-ensure-script` and the `JERYU_TOOL_GIT_ASKPASS` credential
+  helper mode.
 - Add bounded locked package-only compile, test, and coverage feedback.
 - Add create-once exact-source repair receipts with replay, path, link,
   evidence, source-identity, schema, canonical-content, and replacement-race

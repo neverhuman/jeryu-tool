@@ -32,51 +32,20 @@ use paths::*;
 use remote::*;
 use storage::*;
 
-#[derive(Default)]
-struct Args {
-    check: bool,
-    candidate: bool,
-    repos: Vec<String>,
-    roots: Vec<String>,
-    heads: Vec<String>,
-    family_root: Option<PathBuf>,
+/// The closed argument set of `render-tool-manifest`, parsed by clap in
+/// `main` and handed here already typed.
+#[derive(Debug, Default)]
+pub struct Args {
+    pub check: bool,
+    pub candidate: bool,
+    pub repos: Vec<String>,
+    pub roots: Vec<String>,
+    pub heads: Vec<String>,
+    pub family_root: Option<PathBuf>,
 }
 
-fn parse_args(args: &[String]) -> Result<Args, String> {
-    let mut parsed = Args::default();
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--check" => parsed.check = true,
-            "--candidate" => parsed.candidate = true,
-            "--repo" | "--repo-root" | "--expected-head" | "--family-root" => {
-                let flag = &args[index];
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| format!("{flag} requires a value"))?
-                    .clone();
-                match flag.as_str() {
-                    "--repo" => parsed.repos.push(value),
-                    "--repo-root" => parsed.roots.push(value),
-                    "--expected-head" => parsed.heads.push(value),
-                    "--family-root" => {
-                        if parsed.family_root.replace(PathBuf::from(value)).is_some() {
-                            return Err("duplicate --family-root".to_owned());
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            value => return Err(format!("unrecognized renderer argument: {value}")),
-        }
-        index += 1;
-    }
-    Ok(parsed)
-}
-
-pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
-    let mut args = parse_args(raw_args)?;
+pub fn run(tool_root: &Path, args: Args) -> Result<i32, String> {
+    let mut args = args;
     // Candidate qualification is check-only: a write, an installation, or a
     // receipt must carry real protected-main authority.
     if args.candidate && !args.check {
@@ -342,10 +311,7 @@ pub fn run(tool_root: &Path, raw_args: &[String]) -> Result<i32, String> {
     Ok(0)
 }
 
-pub fn emit_ensure_script(tool_root: &Path, args: &[String]) -> Result<i32, String> {
-    if !args.is_empty() {
-        return Err("emit-ensure-script accepts no arguments".to_owned());
-    }
+pub fn emit_ensure_script(tool_root: &Path) -> Result<i32, String> {
     let pin = Pin::load(tool_root)?;
     let function = require_function(tool_root)?;
     print!("{}", ensure_script(&pin, &function));

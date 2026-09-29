@@ -205,12 +205,9 @@ fn build_summary(root: &Path) -> Result<Value, String> {
     Ok(Value::Object(summary))
 }
 
-pub fn run(root: &Path, args: &[String]) -> Result<i32, String> {
-    if args.iter().any(|arg| arg != "--check") {
-        return Err("registry-summary accepts only --check".to_owned());
-    }
+pub fn run(root: &Path, check: bool) -> Result<i32, String> {
     let summary = build_summary(root)?;
-    if args.iter().any(|arg| arg == "--check") {
+    if check {
         println!(
             "registry ok: {} tool(s), {} open task(s), {} LOC anticipated, {} LOC realized",
             summary["tool_count"],

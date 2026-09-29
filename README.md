@@ -39,6 +39,7 @@ registry.
 | `ops/test-render-tool-manifest.sh` | Proves unscoped rendering is check-only and write mode rejects missing custody, dirty roots, wrong origins, and heads not based on current protected main. |
 | `policy/default-audit-policy.toml` | The jeryu-managed fallback policy used to force-score repos that carry no policy of their own. |
 | `generated/jankurai-pin.env` | Generated source/build/binary identity, including commit/tag/tree, archive/lock/binary digests, toolchain, target, and exact version. Do not edit by hand. |
+| `docs/toolctl.md` | The `jeryu-toolctl` command line: every subcommand and flag, and the `JERYU_TOOL_GIT_ASKPASS` credential-helper mode. |
 | `docs/tools.md` | The jankurai tool-compounding catalog + adoption guidance (live adoption data comes from the forge). |
 | `docs/tools-registry.md` | The reusable-tool registry schema, lifecycle, and LOC-saved definition. |
 

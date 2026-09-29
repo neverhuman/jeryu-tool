@@ -383,11 +383,11 @@ fn candidate_flag_is_rejected_outside_check_mode() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let error = run(
         &root,
-        &[
-            "--candidate".to_owned(),
-            "--repo".to_owned(),
-            "jeryu-tool".to_owned(),
-        ],
+        Args {
+            candidate: true,
+            repos: vec!["jeryu-tool".to_owned()],
+            ..Args::default()
+        },
     )
     .expect_err("candidate write must fail closed");
     assert!(error.contains("--candidate is valid only with --check"));

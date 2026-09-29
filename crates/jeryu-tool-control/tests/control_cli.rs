@@ -26,16 +26,88 @@ fn registry_check_and_closed_arguments() {
     assert!(!rejected.status.success());
     assert!(rejected.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(stderr.starts_with("registry-summary accepts only --check\n"));
+    assert!(stderr.starts_with("error: unexpected argument \'--unknown\' found"));
+    assert!(stderr.contains("Usage: jeryu-toolctl --tool-root <PATH> registry-summary"));
+    assert!(stderr.contains("purpose: select one closed jeryu-tool control command"));
+    assert!(stderr.contains("reason: the command line is outside the accepted schema"));
+    assert!(stderr.contains("run jeryu-toolctl --help for the accepted commands"));
+    assert!(stderr.contains("docs_url: docs/toolctl.md"));
+}
+
+#[test]
+fn a_registry_refusal_keeps_its_own_repair_block() {
+    // An empty root has no tools-registry.toml, so the refusal comes from the
+    // registry itself rather than from argument parsing.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let rejected = command(&root, &["registry-summary", "--check"]);
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("missing tools-registry.toml"));
     assert!(stderr.contains("purpose: validate the canonical reusable-tool registry"));
-    assert!(stderr.contains("reason: registry or task input violated the closed schema"));
-    assert!(stderr.contains(
-        "common_fixes: fix the named field|remove the duplicate id|correct the status or task reference"
-    ));
     assert!(stderr.contains("docs_url: docs/tools-registry.md"));
     assert!(stderr.contains(
         "repair_hint: run ops/registry-summary.sh --check after correcting the named input"
     ));
+}
+
+#[test]
+fn help_lists_every_command_and_the_hidden_askpass_mode() {
+    let output = Command::new(env!("CARGO_BIN_EXE_jeryu-toolctl"))
+        .arg("--help")
+        .output()
+        .expect("run jeryu-toolctl --help");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout).expect("UTF-8 help");
+    for command in [
+        "emit-ensure-script",
+        "registry-summary",
+        "render-tool-manifest",
+    ] {
+        assert!(help.contains(command), "--help omits {command}");
+    }
+    assert!(help.contains("JERYU_TOOL_GIT_ASKPASS"));
+    assert!(help.contains("--tool-root <PATH>"));
+}
+
+#[test]
+fn the_renderer_flags_are_all_documented_in_help() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = command(&root, &["render-tool-manifest", "--help"]);
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).expect("UTF-8 help");
+    for flag in [
+        "--check",
+        "--candidate",
+        "--repo <NAME>",
+        "--repo-root <NAME=PATH>",
+        "--expected-head <NAME=SHA>",
+        "--family-root <PATH>",
+    ] {
+        assert!(help.contains(flag), "renderer help omits {flag}");
+    }
+}
+
+#[test]
+fn a_missing_tool_root_is_a_usage_refusal() {
+    let rejected = Command::new(env!("CARGO_BIN_EXE_jeryu-toolctl"))
+        .arg("registry-summary")
+        .output()
+        .expect("run jeryu-toolctl without --tool-root");
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("--tool-root <PATH>"));
+    assert!(stderr.contains("common_fixes: pass --tool-root before the command"));
+}
+
+#[test]
+fn emit_ensure_script_takes_no_arguments() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let rejected = command(&root, &["emit-ensure-script", "extra"]);
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("unexpected argument"));
 }
 
 #[test]
