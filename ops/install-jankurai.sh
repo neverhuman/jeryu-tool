@@ -571,6 +571,7 @@ previous_sha=""
 target_replaced=0
 installed_target_identity=""
 success=0
+builder_in_flight=0
 
 rollback_target() {
   local restore_fd restore_leaf restore_identity restore_descriptor
@@ -618,7 +619,14 @@ finish() {
     remove_retained_leaf "${receipt_install_fd}" "${receipt_install_identity}" \
       "${receipt_dir_fd}" "${receipt_install_leaf}"
   fi
-  rm -rf "${scratch}"
+  if [[ "${builder_in_flight}" == 1 ]]; then
+    # Concurrent parent/child TERM traps must never remove a live builder bind.
+    printf 'install-jankurai: retaining source after incomplete builder call: %s\n' \
+      "${scratch}" >&2
+    status=1
+  else
+    rm -rf "${scratch}"
+  fi
   exit "${status}"
 }
 trap finish EXIT
@@ -671,7 +679,9 @@ else
     die "source checkout is dirty before build"
 
   mkdir -p "$(dirname "${candidate}")"
+  builder_in_flight=1
   "${here}/build-jankurai-hermetic.sh" "${scratch}/source" "${candidate}"
+  builder_in_flight=0
   [[ -z "$(forge_git -C "${scratch}/source" status --porcelain --untracked-files=all)" ]] ||
     die "source checkout became dirty during build"
 fi

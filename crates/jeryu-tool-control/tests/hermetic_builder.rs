@@ -5,6 +5,9 @@ use std::{
     process::{Command, Output},
 };
 
+#[path = "hermetic_builder/create_attempt.rs"]
+mod create_attempt;
+
 const FIXTURE: &str = r#"
 tool_root="$1"
 builder_file="${tool_root}/ops/build-jankurai-hermetic.sh"
@@ -13,6 +16,10 @@ test_root="$(mktemp -d /tmp/jeryu-builder-test.XXXXXX)"
 test_identity="$(stat -c '%d:%i:%u' "${test_root}")"
 cleanup() {
   local status=$? mount_point link target
+  if (( status != 0 )) || [[ "${retain_fixture:-0}" == 1 ]]; then
+    printf 'retaining builder fixture (status=%s): %s\n' "${status}" "${test_root}" >&2
+    exit "${status}"
+  fi
   [[ -d "${test_root}" && ! -L "${test_root}" &&
     "$(realpath -e "${test_root}")" == "${test_root}" &&
     "$(stat -c '%d:%i:%u' "${test_root}")" == "${test_identity}" ]] || exit 1
@@ -97,6 +104,12 @@ fn execute(script: &str, socket: Option<&Path>) -> Output {
 }
 
 fn check(output: Output) {
+    for line in String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter(|line| line.starts_with("retaining builder fixture (status="))
+    {
+        eprintln!("{line}");
+    }
     assert!(
         output.status.success(),
         "{}{}",
@@ -139,15 +152,19 @@ mode="$(stat -c %a "${source_root}/Cargo.lock")"
 refused 'closed vendor materialization failed offline' taskset -c "${pair}" bash "${builder_file}" "${source_root}" "${output}"
 grep -F "cpuset=${pair} cpus=2 memory=6g" "${test_root}/failure.log" >/dev/null
 grep -F 'vendor --locked --offline --versioned-dirs' "${FIXTURE_CARGO_LOG}" >/dev/null
-test -z "$(find "${TMPDIR}" -mindepth 1 -print -quit)"
+mapfile -t first_kept < <(find "${TMPDIR}" -mindepth 1 -maxdepth 1 -type d)
+test "${#first_kept[@]}" = 1
+grep -F 'retaining failed builder scratch/stage: build_exit=1' "${test_root}/failure.log" >/dev/null
 test "$(stat -c %a "${source_root}/Cargo.lock")" = "${mode}"
 test ! -e "${output}"
 printf 'unchanged\n' >"${test_root}/sentinel"
 export FIXTURE_LINK_TARGET="${test_root}/sentinel"
-refused 'retaining changed, mounted, or linked build scratch' taskset -c "${pair}" bash "${builder_file}" "${source_root}" "${output}"
+refused 'retaining failed builder scratch/stage' taskset -c "${pair}" bash "${builder_file}" "${source_root}" "${output}"
 mapfile -t kept < <(find "${TMPDIR}" -mindepth 1 -maxdepth 1 -type d)
-test "${#kept[@]}" = 1
-test "$(readlink "${kept[0]}/vendor/fixture-link")" = "${FIXTURE_LINK_TARGET}"
+test "${#kept[@]}" = 2
+new_kept="${kept[0]}"
+[[ "${new_kept}" != "${first_kept[0]}" ]] || new_kept="${kept[1]}"
+test "$(readlink "${new_kept}/vendor/fixture-link")" = "${FIXTURE_LINK_TARGET}"
 test "$(cat "${FIXTURE_LINK_TARGET}")" = unchanged
 "#);
 }
@@ -248,4 +265,223 @@ rm "${docker_socket}"
     fs::remove_file(&socket).expect("remove owned socket fixture");
     fs::remove_dir(root).expect("remove empty socket directory");
     check(output);
+}
+
+const LIFECYCLE: &str = r#"
+# Extract the actual production functions and launch sequence. Docker transport
+# alone is synthetic; no daemon, image, container, vendor or compiler is used.
+sed -n '/^container_control_valid() {$/,/^control=/p' "${builder_file}" | sed '$d' >"${test_root}/lifecycle.sh"
+sed -n '/^create_argv=(create /,/^container_cleanup || die /p' "${builder_file}" >"${test_root}/launch.sh"
+test -s "${test_root}/lifecycle.sh" && test -s "${test_root}/launch.sh"
+source "${test_root}/lifecycle.sh"
+sed -n '/^cleanup() {$/,/^}$/p' "${builder_file}" >"${test_root}/production-cleanup.sh"
+docker_bin=/usr/bin/false docker_socket=/run/synthetic-unused.sock
+scratch="${test_root}/temporary/owned"
+mkdir -m 700 "${scratch}" "${scratch}/control"
+scratch_identity="$(stat -c '%d:%i:%u' "${scratch}")"
+control="${scratch}/control"
+control_identity="$(stat -c '%d:%i:%u:%a' "${control}")"
+invocation=01234567-89ab-cdef-0123-456789abcdef
+container_name="jeryu-jankurai-${invocation}"
+build_uid="$(id -u)" build_gid="$(id -g)" build_cpus=0,1
+fixture_id=$(printf 'a%.0s' {1..64})
+actual_image_id="${JANKURAI_BUILDER_IMAGE_ID}"
+create_attempted=1 container_removed=0 container_id= docker_call_limit=5
+fixture_mode=ok fixture_counter=0 fixture_cleanup=0 stage= stage_identity=
+reset_container() {
+  fixture_counter=$((fixture_counter + 1))
+  control="${scratch}/control-${fixture_counter}"
+  mkdir -m 700 "${control}"
+  control_identity="$(stat -c '%d:%i:%u:%a' "${control}")"
+  container_removed=0 container_id= fixture_mode=ok
+  printf '%s' "${fixture_id}" >"${control}/cid"
+  : >"${test_root}/engine.calls"
+  jq -n --arg id "${fixture_id}" --arg name "${container_name}" --arg invocation "${invocation}" \
+    --arg image "${actual_image_id}" --arg user "${build_uid}:${build_gid}" \
+    --arg source "${source_root}" --arg scratch "${scratch}" '{
+    Id:$id,Name:("/"+$name),Image:$image,Config:{User:$user,Labels:{"org.jeryu.builder.invocation":$invocation}},
+    State:{Running:false,Status:"created",ExitCode:0},Mounts:[
+      {Type:"bind",Source:$source,Destination:"/opt/jeryu/jankurai",RW:false},
+      {Type:"bind",Source:($scratch+"/vendor"),Destination:"/opt/jeryu/vendor",RW:false},
+      {Type:"bind",Source:($scratch+"/cargo-config.toml"),Destination:"/usr/local/cargo/config.toml",RW:false},
+      {Type:"bind",Source:($scratch+"/target"),Destination:"/opt/jeryu/target",RW:true},
+      {Type:"bind",Source:($scratch+"/out"),Destination:"/opt/jeryu/out",RW:true}
+    ]}' >"${control}/backend.json"
+}
+change_container() {
+  jq "$1" "${control}/backend.json" >"${control}/next.json"
+  mv "${control}/next.json" "${control}/backend.json"
+}
+local_docker() {
+  local verb=$1
+  [[ "$1" != container ]] || { verb=$2; shift; }
+  shift
+  printf '%s\n' "${verb}" >>"${test_root}/engine.calls"
+  case "${verb}" in
+    create)
+      [[ "$*" == *"--cidfile ${control}/cid --name ${container_name}"* &&
+         "$*" == *"--label org.jeryu.builder.invocation=${invocation}"* &&
+         "$*" == *"--network none --read-only --cap-drop ALL"* ]] || return 90
+      [[ "${docker_call_limit}" == 120 ]] || return 91
+      printf '%s\0' create "$@" | jq -Rs 'split("\u0000")[:-1]' >"${control}/actual-argv.json"
+      case "${fixture_mode}" in
+        create-no-id) printf 'synthetic create refusal\n' >&2; return 23 ;;
+        create-timeout) return 124 ;;
+        create-killed) return 137 ;;
+        create-success-no-id) printf '%s\n' "${fixture_id}"; return 0 ;;
+        create-partial) printf '%s' "${fixture_id}" >"${control}/cid"; return 23 ;;
+        create-wrong-label) change_container '.Config.Labels["org.jeryu.builder.invocation"]="foreign"' ;;
+      esac
+      printf '%s' "${fixture_id}" >"${control}/cid"
+      printf '%s\n' "${fixture_id}"
+      ;;
+    start)
+      [[ "$*" == "--attach ${fixture_id}" && "${docker_call_limit}" == 900 ]] || return 92
+      [[ "${fixture_mode}" != start-fail ]] || return 24
+      change_container '.State.Status="exited"'
+      [[ "${fixture_mode}" != nonzero-exit ]] || change_container '.State.ExitCode=17'
+      ;;
+    inspect)
+      [[ "${docker_call_limit}" == 5 && "${@: -1}" == "${fixture_id}" ]] || return 93
+      [[ "${fixture_mode}" != inspect-fail ]] || return 25
+      cat "${control}/backend.json"
+      ;;
+    stop)
+      [[ "$*" == "--time 1 ${fixture_id}" && "${docker_call_limit}" == 5 ]] || return 94
+      [[ "${fixture_mode}" != stop-fail ]] || return 26
+      change_container '.State.Running=false | .State.Status="exited"'
+      ;;
+    rm)
+      [[ "$*" == "${fixture_id}" && "${docker_call_limit}" == 5 ]] || return 95
+      [[ "${fixture_mode}" != remove-fail ]] || return 27
+      ;;
+    ls)
+      [[ "$*" == "--all --no-trunc --filter id=${fixture_id} --format {{.ID}}" &&
+         "${docker_call_limit}" == 5 ]] || return 96
+      [[ "${fixture_mode}" != absence-fail ]] || return 28
+      [[ "${fixture_mode}" != still-present ]] || printf '%s\n' "${fixture_id}"
+      ;;
+    *) return 97 ;;
+  esac
+}
+die() { printf '%s\n' "$*" >&2; exit 1; }
+launch_fixture() {
+  # A separate shell preserves production errexit even when this helper is an if condition.
+  {
+    printf 'set -euo pipefail\n'
+    declare -p build_uid build_gid build_cpus source_root scratch control invocation container_name \
+      container_id create_attempted container_removed docker_call_limit fixture_id fixture_mode \
+      test_root control_identity scratch_identity docker_bin docker_socket stage stage_identity actual_image_id "${!JANKURAI_@}"
+    declare -f local_docker change_container die
+    printf 'create_attempted=0 create_status=\nsource %q\n' "${test_root}/lifecycle.sh"
+    if [[ "${fixture_cleanup}" == 1 ]]; then
+      printf 'source %q\ntrap cleanup EXIT\n' "${test_root}/production-cleanup.sh"
+    fi
+    printf 'source %q\n' "${test_root}/launch.sh"
+  } >"${test_root}/launch-driver.sh"
+  bash "${test_root}/launch-driver.sh"
+}
+reset_container
+"#;
+
+fn lifecycle(script: &str) {
+    run(&format!("{LIFECYCLE}\n{script}"));
+}
+
+#[test]
+fn builder_cleanup_rejects_foreign_identity_and_unsafe_cid_without_mutation() {
+    lifecycle(
+        r#"
+for mutation in '.Id="foreign"' '.Name="/foreign"' '.Image="foreign"' \
+  '.Config.User="0:0"' '.Config.Labels["org.jeryu.builder.invocation"]="foreign"' \
+  '.Mounts[0].Source="/foreign"' '.Mounts[0].RW=true' \
+  '.Mounts += [{Type:"bind",Source:"/private",Destination:"/control",RW:true}]'; do
+  reset_container
+  change_container "${mutation}"
+  if container_cleanup; then exit 1; fi
+  test "${container_removed}" = 0
+  test "$(cat "${test_root}/engine.calls")" = inspect
+done
+for mode in missing malformed hardlink symlink; do
+  reset_container
+  case "${mode}" in
+    missing) rm "${control}/cid" ;;
+    malformed) printf 'short\n' >"${control}/cid" ;;
+    hardlink) ln "${control}/cid" "${test_root}/cid-alias" ;;
+    symlink) mv "${control}/cid" "${test_root}/cid-alias"; ln -s "${test_root}/cid-alias" "${control}/cid" ;;
+  esac
+  if container_cleanup; then exit 1; fi
+  test ! -s "${test_root}/engine.calls"
+  test "${container_removed}" = 0
+  [[ ! -e "${control}/cid" && ! -L "${control}/cid" ]] || rm "${control}/cid"
+  [[ ! -e "${test_root}/cid-alias" ]] || rm "${test_root}/cid-alias"
+done
+reset_container
+container_read_id
+printf 'b%.0s' {1..64} >"${control}/cid"
+if container_cleanup; then exit 1; fi
+test ! -s "${test_root}/engine.calls"
+reset_container
+mv "${control}" "${scratch}/retained-control"
+mkdir -m 700 "${control}"
+if container_cleanup; then exit 1; fi
+test ! -s "${test_root}/engine.calls"
+rmdir "${control}"
+mv "${scratch}/retained-control" "${control}"
+"#,
+    );
+}
+
+#[test]
+fn builder_cleanup_is_bounded_and_keeps_unknown_daemon_closure_failed() {
+    lifecycle(
+        r#"
+printf '%s\n' "${fixture_id}" >"${control}/cid"
+change_container '.State.Running=true | .State.Status="running"'
+# A TERM trap can run while the start call's dynamic900s limit remains active.
+docker_call_limit=900 container_cleanup 2>"${test_root}/cleanup.stderr"
+printf 'hermetic container custody: id=%s name=%s removed=true\n' \
+  "${fixture_id}" "${container_name}" >"${test_root}/expected-marker"
+cmp "${test_root}/cleanup.stderr" "${test_root}/expected-marker"
+container_cleanup 2>"${test_root}/repeated-cleanup.stderr"
+test ! -s "${test_root}/repeated-cleanup.stderr"
+test "${container_removed}" = 1
+test "$(cat "${test_root}/engine.calls")" = $'inspect\nstop\ninspect\nrm\nls'
+for mode in inspect-fail stop-fail remove-fail absence-fail still-present; do
+  reset_container
+  fixture_mode="${mode}"
+  if [[ "${mode}" == stop-fail ]]; then change_container '.State.Running=true'; fi
+  if container_cleanup 2>"${test_root}/cleanup.stderr"; then exit 1; fi
+  ! grep -F 'removed=true' "${test_root}/cleanup.stderr"
+  test "${container_removed}" = 0
+  test -d "${scratch}" && test -d "${source_root}"
+done
+"#,
+    );
+}
+
+#[test]
+fn installer_retains_source_while_builder_completion_is_unknown() {
+    run(r#"
+sed -n '/^  if \[\[ "${builder_in_flight}" == 1 \]\]; then$/,/^  exit "${status}"$/p' \
+  "${tool_root}/ops/install-jankurai.sh" | sed '$d' >"${test_root}/installer-cleanup.sh"
+test -s "${test_root}/installer-cleanup.sh"
+# Only scratch removal is replaced; the retention branch is production text.
+rm() { printf 'removed %s\n' "$*" >>"${test_root}/cleanup.calls"; }
+for code in 0 1 130 143; do
+  : >"${test_root}/cleanup.calls"
+  builder_in_flight=1 status="${code}" scratch="${source_root}"
+  source "${test_root}/installer-cleanup.sh" 2>"${test_root}/retain.stderr"
+  test "${status}" = 1
+  grep -F "retaining source after incomplete builder call: ${source_root}" \
+    "${test_root}/retain.stderr" >/dev/null
+  test ! -s "${test_root}/cleanup.calls"
+  test -d "${source_root}"
+done
+builder_in_flight=0
+source "${test_root}/installer-cleanup.sh"
+test "$(cat "${test_root}/cleanup.calls")" = "removed -rf ${source_root}"
+test -d "${source_root}"
+unset -f rm
+"#);
 }
