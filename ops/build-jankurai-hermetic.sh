@@ -200,12 +200,16 @@ docker_socket="/run/docker.sock"
   die "local Docker socket or parent is writable by another user"
 docker_socket_identity="$(stat -c '%d:%i:%u:%g:%a:%h' -- "${docker_socket}")"
 mkdir "${scratch}/docker-config"
+# local_docker reads the engine from its own name: verify_builder_image takes
+# `local docker_bin="$1"` (here "local_docker"), and bash's dynamic scope would
+# hand that name to timeout inside the call.
+governed_docker_bin="${docker_bin}"
 local_docker() {
   [[ -S "${docker_socket}" && ! -L "${docker_socket}" &&
     "$(stat -c '%d:%i:%u:%g:%a:%h' -- "${docker_socket}")" == "${docker_socket_identity}" ]] ||
     die "local Docker socket changed after admission"
   env -i PATH=/usr/bin:/bin /usr/bin/timeout --foreground --signal=TERM --kill-after=2s \
-    "${docker_call_limit:-5}s" "${docker_bin}" \
+    "${docker_call_limit:-5}s" "${governed_docker_bin}" \
     --host "unix://${docker_socket}" --config "${scratch}/docker-config" "$@"
 }
 verify_builder_image local_docker "${JANKURAI_BUILDER_IMAGE}"

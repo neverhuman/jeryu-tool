@@ -211,6 +211,7 @@ test -s "${test_root}/dispatch.sh"
 source "${test_root}/dispatch.sh"
 die() { printf '%s\n' "$*" >&2; exit 1; }
 docker_bin="${test_root}/bin/fixture-engine"
+governed_docker_bin="${docker_bin}"
 docker_socket="$2"
 docker_socket_identity="$(stat -c '%d:%i:%u:%g:%a:%h' "${docker_socket}")"
 scratch="${test_root}"
@@ -218,6 +219,9 @@ export DOCKER_HOST=ssh://fixture.invalid DOCKER_CONTEXT=fixture-remote
 export DOCKER_CONFIG=/fixture-private-config DOCKER_TLS_VERIFY=1
 export DOCKER_AUTH_CONFIG=fixture-auth CREDENTIAL_SENTINEL=fixture-only
 local_docker image inspect --format '{{.Id}}' fixture-image >"${test_root}/dispatch.log"
+# verify_builder_image names its engine `local docker_bin`; the wrapper must not read that.
+shadowed_engine() { local docker_bin=local_docker; local_docker image inspect --format '{{.Id}}' fixture-image >/dev/null; }
+shadowed_engine || die "local_docker followed a caller's docker_bin"
 printf '%s\n' --host "unix://${docker_socket}" --config "${scratch}/docker-config" \
   image inspect --format '{{.Id}}' fixture-image >"${test_root}/expected.log"
 cmp "${test_root}/dispatch.log" "${test_root}/expected.log"
