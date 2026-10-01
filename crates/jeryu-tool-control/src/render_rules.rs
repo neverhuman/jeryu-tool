@@ -316,7 +316,12 @@ pub(crate) fn render_consumer(
             .replace_all(&text, format!("${{1}}{}${{2}}", pin.get("binary_sha256")))
             .into_owned();
     }
-    if name.ends_with(".yml") && rel.contains("/workflows/") && text.contains("JANKURAI_") {
+    // A pin-free block carries no `JANKURAI_` key, so its marker also selects the
+    // workflow; otherwise an earlier render's leftovers would never be revisited.
+    if name.ends_with(".yml")
+        && rel.contains("/workflows/")
+        && (text.contains("JANKURAI_") || text.contains(WORKFLOW_PIN_MARKER_BEGIN))
+    {
         text = if owner {
             replace_workflow_pin(&text, pin)
         } else {

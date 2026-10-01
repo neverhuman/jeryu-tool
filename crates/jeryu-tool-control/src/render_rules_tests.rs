@@ -266,8 +266,11 @@ fn render_at(rel: &str, text: &str, owner: bool) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let pin = Pin::load(&root).expect("canonical pin");
     let function = require_function(&root).expect("template");
+    // Tests run in parallel and may render the same path; each call gets its own dir.
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "jeryu-render-owner-{}-{}",
+        "jeryu-render-owner-{}-{call}-{}",
         std::process::id(),
         rel.replace('/', "_")
     ));
@@ -425,4 +428,28 @@ fn a_consumer_workflow_whose_env_held_only_the_pin_loses_the_section() {
     );
     let owner = render_at(".github/workflows/ci.yml", &workflow, true);
     assert!(owner.contains("env:\n"), "jeryu-tool keeps its pinned env");
+}
+
+#[test]
+fn an_earlier_pin_free_render_with_an_empty_env_is_repaired() {
+    // jeryu-tool#7 rendered this shape, before #9 dropped empty env sections; it
+    // carries no `JANKURAI_` key, so only the marker selects it for re-render.
+    let workflow = format!(
+        "name: ci\non: push\nenv:\n{}\n\njobs:\n  ci:\n    runs-on: ubuntu-latest\n",
+        Pin::consumer_workflow_block()
+    );
+    let once = render_at(".github/workflows/ci.yml", &workflow, false);
+    assert!(
+        !once.contains("env:"),
+        "the empty env section is removed: {once}"
+    );
+    assert!(
+        once.contains("jobs:\n  ci:"),
+        "the rest of the workflow is kept"
+    );
+    assert_eq!(
+        render_at(".github/workflows/ci.yml", &once, false),
+        once,
+        "stable on re-render"
+    );
 }
