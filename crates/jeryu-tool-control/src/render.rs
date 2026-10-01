@@ -240,14 +240,16 @@ pub fn run(tool_root: &Path, args: Args) -> Result<i32, String> {
             }
         }
     }
-    for (_, targets) in &repository_targets {
+    let owner_root = repo_root(tool_root, &family_root, "jeryu-tool", &overrides);
+    for (root, targets) in &repository_targets {
+        let owner = *root == owner_root;
         for path in targets {
             if path.ends_with("generated/jankurai-pin.env") {
                 continue;
             }
             let original = fs::read_to_string(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-            let rendered = render_consumer(path, &pin, &function, &context)?;
+            let rendered = render_consumer(path, &pin, &function, &context, owner)?;
             let (rendered, original) = if candidate {
                 (
                     neutralize_candidate_authority(path, &rendered),

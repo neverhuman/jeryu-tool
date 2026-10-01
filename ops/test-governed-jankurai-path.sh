@@ -83,6 +83,10 @@ cp -- "${governed_source}" "${ambient_bin}"
 chmod 0555 "${broker_bin}" "${attacker_bin}" "${ambient_bin}"
 printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${older_local_bin}"
 chmod 0555 "${older_local_bin}"
+# A release broker carries no receipt: its digest record sits beside it with
+# the same read-only, single-link custody.
+sha256sum "${broker_bin}" | awk '{print $1}' >"${broker_bin}.sha256"
+chmod 0444 "${broker_bin}.sha256"
 
 # Bind the private ordinary-mode fixture to a release-authoritative receipt.
 # The content-addressed filename is the receipt's own digest.
@@ -190,6 +194,30 @@ expect_failure "linked ordinary auditor verifier" \
   bash "${test_verifier}"
 rm -f -- "${tmp}/home/.jeryu/bin/jankurai-linked"
 
+# Freshness is the host's: its installer leaves an authority stamp naming the
+# pinned binary. A stamp that names another binary means the host has not
+# installed the current pin; an unreadable stamp is refused; an explicit
+# JERYU_JANKURAI_AUTHORITY_SHA256 is an extra assertion.
+ambient_sha="$(sha256sum "${ambient_bin}" | awk '{print $1}')"
+stamp="${tmp}/home/.jeryu/authority/jankurai.json"
+mkdir -p "$(dirname "${stamp}")"
+run_ordinary() {
+  env -i HOME="${tmp}/home" \
+    PATH="${tmp}/home/.local/bin:${tmp}/home/.jeryu/bin:/usr/bin:/bin" "$@" \
+    bash -c "${ordinary_command}" bash "${test_lib}" "${ambient_bin}"
+}
+printf '{"binary_sha256":"%s"}\n' "${ambient_sha}" >"${stamp}"
+run_ordinary
+printf '{"binary_sha256":"%064d"}\n' 0 >"${stamp}"
+expect_failure "stale host install" "the host has not installed the current pin" run_ordinary
+printf 'not json\n' >"${stamp}"
+expect_failure "unreadable authority stamp" "jankurai authority stamp is unreadable" run_ordinary
+rm -f -- "${stamp}"
+run_ordinary
+expect_failure "explicit authority assertion" "but JERYU_JANKURAI_AUTHORITY_SHA256 names" \
+  run_ordinary JERYU_JANKURAI_AUTHORITY_SHA256="$(printf '%064d' 0)"
+run_ordinary JERYU_JANKURAI_AUTHORITY_SHA256="${ambient_sha}"
+
 run_release_broker() {
   local path="$1"
   local release_command
@@ -230,7 +258,7 @@ cp -- "${broker_bin}" "${tmp}/governed-backup"
 chmod 0755 "${broker_bin}"
 printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${broker_bin}"
 chmod 0555 "${broker_bin}"
-expect_failure "wrong broker binary" "governed jankurai identity mismatch" \
+expect_failure "wrong broker binary" "but the jeryu-tool pin names" \
   run_release_broker "${tmp}/broker/bin"
 rm -f -- "${broker_bin}"
 mv -- "${tmp}/governed-backup" "${broker_bin}"
@@ -241,9 +269,28 @@ expect_failure "writable broker binary" "release broker Jankurai custody mismatc
   run_release_broker "${tmp}/broker/bin"
 chmod 0555 "${broker_bin}"
 
+chmod 0644 "${broker_bin}.sha256"
+expect_failure "writable broker digest record" "release broker Jankurai digest record custody mismatch" \
+  run_release_broker "${tmp}/broker/bin"
+mv -- "${broker_bin}.sha256" "${tmp}/broker-record"
+expect_failure "missing broker digest record" "release broker Jankurai digest record custody mismatch" \
+  run_release_broker "${tmp}/broker/bin"
+mv -- "${tmp}/broker-record" "${broker_bin}.sha256"
+chmod 0444 "${broker_bin}.sha256"
+# The record is decisive: a caller-supplied authority digest cannot stand in for it.
+chmod 0644 "${broker_bin}.sha256"
+printf '%064d\n' 0 >"${broker_bin}.sha256"
+chmod 0444 "${broker_bin}.sha256"
+expect_failure "caller cannot stand in for the broker record" "but the jeryu-tool pin names" \
+  run_release_broker "${tmp}/broker/bin" \
+  JERYU_JANKURAI_AUTHORITY_SHA256="$(sha256sum "${broker_bin}" | awk '{print $1}')"
+chmod 0644 "${broker_bin}.sha256"
+sha256sum "${broker_bin}" | awk '{print $1}' >"${broker_bin}.sha256"
+chmod 0444 "${broker_bin}.sha256"
+
 ln "${broker_bin}" "${tmp}/broker/bin/jankurai-linked"
 expect_failure "linked broker binary" "release broker Jankurai custody mismatch" \
   run_release_broker "${tmp}/broker/bin"
 rm -f -- "${tmp}/broker/bin/jankurai-linked"
 
-printf 'governed Jankurai path tests passed: broker ambient env path missing identity custody\n'
+printf 'governed Jankurai path tests passed: broker ambient env path missing identity custody stamp record\n'

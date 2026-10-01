@@ -329,6 +329,33 @@ impl Pin {
         .join("\n")
     }
 
+    /// The block a consumer's CI scripts carry. It names no identity: the governed
+    /// auditor is whatever the host installed, and `require_jankurai` verifies that
+    /// binary against its receipt and exports `JERYU_JANKURAI_*` from it. The one pin
+    /// of record stays in jeryu-tool, so a Jankurai bump changes no consumer.
+    pub fn consumer_shell_block() -> String {
+        [
+            PIN_MARKER_BEGIN,
+            "# The governed Jankurai identity is the binary installed on this host and its",
+            "# installation receipt: require_jankurai verifies both and exports JERYU_JANKURAI_*",
+            "# from the receipt. The one pin of record is jeryu-tool's tool-manifest.toml.",
+            PIN_MARKER_END,
+        ]
+        .join("\n")
+            + "\n"
+    }
+
+    /// The workflow counterpart of [`Pin::consumer_shell_block`].
+    pub fn consumer_workflow_block() -> String {
+        [
+            format!("  {WORKFLOW_PIN_MARKER_BEGIN}"),
+            "  # No Jankurai identity is pinned here; see ops/ci/lib.sh require_jankurai."
+                .to_owned(),
+            format!("  {WORKFLOW_PIN_MARKER_END}"),
+        ]
+        .join("\n")
+    }
+
     pub fn workflow_block(&self) -> String {
         let mut lines = vec![format!("  {WORKFLOW_PIN_MARKER_BEGIN}")];
         lines.extend(PIN_ENV_FIELDS.iter().map(|(name, key)| {

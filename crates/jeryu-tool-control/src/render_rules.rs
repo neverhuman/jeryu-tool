@@ -184,6 +184,10 @@ pub(crate) fn require_function(tool_root: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn ensure_script(pin: &Pin, function: &str) -> String {
+    ensure_script_with(&pin.shell_block(), function)
+}
+
+fn ensure_script_with(block: &str, function: &str) -> String {
     format!(
         concat!(
             "#!/usr/bin/env bash\n",
@@ -196,7 +200,7 @@ pub(crate) fn ensure_script(pin: &Pin, function: &str) -> String {
             "  \"${{JERYU_JANKURAI_VERSION}}\" \"${{JERYU_JANKURAI_SHA256}}\" ",
             "\"${{JERYU_GOVERNED_JANKURAI_BIN}}\"\n",
         ),
-        pin.shell_block(),
+        block,
         function = function,
     )
 }
@@ -206,15 +210,28 @@ mod rewrite;
 use rewrite::{
     bind_jankurai_wrapper, remove_install_step, replace_ci_bridge_constants,
     replace_governance_test_constants, replace_hex_on_marked_line, replace_native_tool_block,
-    replace_pin_block, replace_receipt_path, replace_require_function, replace_workflow_pin,
+    replace_pin_block, replace_pin_block_with, replace_receipt_path, replace_require_function,
+    replace_workflow_pin, replace_workflow_pin_with,
 };
-pub(crate) use rewrite::{regex, semantic_identity_rules};
+pub(crate) use rewrite::{regex, semantic_identity_rules, semantic_identity_rules_without_tag};
 
+/// Consumer CI scripts that verify the installed auditor instead of carrying the pin.
+/// Sandbox image files keep the pin: the image bakes a binary in at build time.
+fn carries_no_pin(rel: &str, name: &str) -> bool {
+    (rel.contains("/ops/ci/") && name.ends_with(".sh"))
+        || rel.ends_with("/scripts/ci-doctor.sh")
+        || name == "ci-fast-push.sh"
+}
+
+/// Render one consumer file. `owner` is true for jeryu-tool itself, which keeps
+/// the full pin (its installer and hermetic build consume it); every other
+/// repository's CI carries no identity and verifies the installed auditor.
 pub(crate) fn render_consumer(
     path: &Path,
     pin: &Pin,
     function: &str,
     context: &RenderContext,
+    owner: bool,
 ) -> Result<String, String> {
     let mut text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -247,15 +264,30 @@ pub(crate) fn render_consumer(
         ));
     }
     if name == "ensure-jankurai.sh" {
-        return Ok(ensure_script(pin, function));
+        if owner {
+            return Ok(ensure_script(pin, function));
+        }
+        return Ok(ensure_script_with(&Pin::consumer_shell_block(), function));
     }
     if name == "lib.sh" && rel.contains("/ops/ci/") {
-        let rendered = replace_require_function(&replace_pin_block(&text, pin)?, function);
+        if owner {
+            let rendered = replace_require_function(&replace_pin_block(&text, pin)?, function);
+            let rendered = bind_jankurai_wrapper(&rendered)?;
+            return Ok(semantic_identity_rules(&rendered, pin));
+        }
+        let rendered = replace_require_function(
+            &replace_pin_block_with(&text, &Pin::consumer_shell_block())?,
+            function,
+        );
         let rendered = bind_jankurai_wrapper(&rendered)?;
-        return Ok(semantic_identity_rules(&rendered, pin));
+        return Ok(semantic_identity_rules_without_tag(&rendered, pin));
     }
     if path.extension().and_then(|value| value.to_str()) == Some("sh") {
-        text = replace_pin_block(&text, pin)?;
+        text = if !owner && carries_no_pin(&rel, name) {
+            replace_pin_block_with(&text, &Pin::consumer_shell_block())?
+        } else {
+            replace_pin_block(&text, pin)?
+        };
     }
     if matches!(name, "audit-policy.toml" | "default-audit-policy.toml") {
         return Ok(regex(r#"(required_tool_version\s*=\s*")[^"]*(")"#)
@@ -285,7 +317,11 @@ pub(crate) fn render_consumer(
             .into_owned();
     }
     if name.ends_with(".yml") && rel.contains("/workflows/") && text.contains("JANKURAI_") {
-        text = replace_workflow_pin(&text, pin);
+        text = if owner {
+            replace_workflow_pin(&text, pin)
+        } else {
+            replace_workflow_pin_with(&text, &Pin::consumer_workflow_block())
+        };
         text = regex(
             r"(?m)^      - name: Cache pinned auditor\n        uses:.*\n        with:\n          path:.*\n          key:.*\n",
         )
@@ -381,6 +417,10 @@ fi\n\n";
         );
     }
     text = replace_receipt_path(&text, &context.image_receipt_sha256);
+    let workflow = name.ends_with(".yml") && rel.contains("/workflows/");
+    if !owner && (workflow || carries_no_pin(&rel, name)) {
+        return Ok(semantic_identity_rules_without_tag(&text, pin));
+    }
     Ok(semantic_identity_rules(&text, pin))
 }
 

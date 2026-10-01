@@ -5,6 +5,10 @@ pub(crate) fn regex(pattern: &str) -> Regex {
 }
 
 pub(super) fn replace_pin_block(text: &str, pin: &Pin) -> Result<String, String> {
+    replace_pin_block_with(text, &pin.shell_block())
+}
+
+pub(super) fn replace_pin_block_with(text: &str, block: &str) -> Result<String, String> {
     let begin_pattern = regex(&format!(r"(?m)^{}$", regex::escape(PIN_MARKER_BEGIN)));
     let end_pattern = regex(&format!(r"(?m)^{}$", regex::escape(PIN_MARKER_END)));
     let begin_matches: Vec<_> = begin_pattern.find_iter(text).collect();
@@ -27,14 +31,14 @@ pub(super) fn replace_pin_block(text: &str, pin: &Pin) -> Result<String, String>
             Ok(format!(
                 "{}\n\n{}{}",
                 &text[..insertion],
-                pin.shell_block(),
+                block,
                 &text[insertion..]
             ))
         }
         ([begin], [end]) if begin.start() < end.start() => {
-            let mut rendered = String::with_capacity(text.len() + pin.shell_block().len());
+            let mut rendered = String::with_capacity(text.len() + block.len());
             rendered.push_str(&text[..begin.start()]);
-            rendered.push_str(&pin.shell_block());
+            rendered.push_str(block);
             rendered.push_str(&text[end.end()..]);
             Ok(rendered)
         }
@@ -100,6 +104,11 @@ pub(super) fn bind_jankurai_wrapper(text: &str) -> Result<String, String> {
 }
 
 pub(super) fn replace_workflow_pin(text: &str, pin: &Pin) -> String {
+    replace_workflow_pin_with(text, &pin.workflow_block())
+}
+
+pub(super) fn replace_workflow_pin_with(text: &str, workflow_block: &str) -> String {
+    let workflow_block = workflow_block.to_owned();
     let Some(start) = text.find("env:\n") else {
         return text.to_owned();
     };
@@ -135,7 +144,7 @@ pub(super) fn replace_workflow_pin(text: &str, pin: &Pin) -> String {
             retained.push(line.to_owned());
         }
     }
-    retained.push(pin.workflow_block());
+    retained.push(workflow_block);
     format!(
         "{}{}\n{}",
         &text[..body_start],
@@ -145,12 +154,19 @@ pub(super) fn replace_workflow_pin(text: &str, pin: &Pin) -> String {
 }
 
 pub(crate) fn semantic_identity_rules(text: &str, pin: &Pin) -> String {
+    let text = semantic_identity_rules_without_tag(text, pin);
+    regex(r"\bv\d+\.\d+\.\d+-deadlang-precision(?:-split\.\d+)?\b")
+        .replace_all(&text, pin.get("tag"))
+        .into_owned()
+}
+
+/// Consumers name the auditor's repository and version (both change only on a
+/// version bump) but never its release tag, which changes on every bump.
+pub(crate) fn semantic_identity_rules_without_tag(text: &str, pin: &Pin) -> String {
     let text = regex(
         r"(?:https://github\.com/neverhuman/jankurai\.git|http://127\.0\.0\.1:8787/git/jeryu/jankurai\.git|https://git\.neverhuman\.org/git/jeryu/jankurai\.git)",
     )
     .replace_all(text, pin.get("repo"));
-    let text = regex(r"\bv\d+\.\d+\.\d+-deadlang-precision(?:-split\.\d+)?\b")
-        .replace_all(&text, pin.get("tag"));
     let text = regex(r"\bjankurai \d+\.\d+\.\d+\b").replace_all(&text, pin.get("version"));
     regex(r"\bJankurai \d+\.\d+\.\d+\b")
         .replace_all(&text, pin.get("version").replace("jankurai", "Jankurai"))

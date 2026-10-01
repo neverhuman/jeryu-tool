@@ -260,3 +260,110 @@ fn ci_bridge_manifest_repo_is_rendered_to_the_hosted_authority() {
     ));
     assert!(!rendered.contains("127.0.0.1:8787"));
 }
+
+/// Write `text` at `rel` under a fresh temporary consumer root and render it.
+fn render_at(rel: &str, text: &str, owner: bool) -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pin = Pin::load(&root).expect("canonical pin");
+    let function = require_function(&root).expect("template");
+    let dir = std::env::temp_dir().join(format!(
+        "jeryu-render-owner-{}-{}",
+        std::process::id(),
+        rel.replace('/', "_")
+    ));
+    let path = dir.join(rel);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    fs::write(&path, text).expect("write fixture");
+    let rendered =
+        render_consumer(&path, &pin, &function, &fixture_context(), owner).expect("render");
+    let _ = fs::remove_dir_all(&dir);
+    rendered
+}
+
+fn pin_values(pin: &Pin) -> Vec<String> {
+    [
+        "binary_sha256",
+        "rev",
+        "tag",
+        "source_tree",
+        "build_context_sha256",
+    ]
+    .iter()
+    .map(|key| pin.get(key).to_owned())
+    .collect()
+}
+
+#[test]
+fn consumer_ci_scripts_and_workflows_carry_no_pin() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pin = Pin::load(&root).expect("canonical pin");
+    let stale = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n{PIN_MARKER_BEGIN}\nexport JERYU_JANKURAI_SHA256=\"{}\"\n{PIN_MARKER_END}\n# built from v1.6.11-deadlang-precision-split.1\nrequire_jankurai() {{\n  :\n}}\njankurai() {{\n  require_jankurai || return 1\n  command \"${{JERYU_GOVERNED_JANKURAI_BIN}}\" \"$@\"\n}}\n",
+        "0".repeat(64)
+    );
+    for rel in [
+        "repo/ops/ci/lib.sh",
+        "repo/ops/ci/pr-ci.sh",
+        "repo/scripts/ci-doctor.sh",
+        "repo/ops/ci/ensure-jankurai.sh",
+    ] {
+        let rendered = render_at(rel, &stale, false);
+        for value in pin_values(&pin) {
+            assert!(
+                !rendered.contains(&value),
+                "{rel} still carries pin value {value}"
+            );
+        }
+        assert!(
+            !rendered.contains(&"0".repeat(64)),
+            "{rel} kept the stale digest"
+        );
+        assert!(
+            rendered.contains("one pin of record is jeryu-tool"),
+            "{rel} lost the marker block"
+        );
+    }
+    let lib = render_at("repo/ops/ci/lib.sh", &stale, false);
+    assert!(
+        lib.contains("v1.6.11-deadlang-precision-split.1"),
+        "consumer tag mentions are left alone"
+    );
+    assert!(
+        lib.contains("authority/jankurai.json"),
+        "consumer lib carries the receipt verifier"
+    );
+
+    let workflow = format!(
+        "name: ci\non: push\nenv:\n  KEEP: \"1\"\n  {WORKFLOW_PIN_MARKER_BEGIN}\n  JANKURAI_BINARY_SHA256: \"{}\"\n  {WORKFLOW_PIN_MARKER_END}\njobs: {{}}\n",
+        "0".repeat(64)
+    );
+    let rendered = render_at("repo/.github/workflows/ci.yml", &workflow, false);
+    assert!(rendered.contains("KEEP: \"1\""));
+    assert!(!rendered.contains("JANKURAI_BINARY_SHA256"));
+    for value in pin_values(&pin) {
+        assert!(
+            !rendered.contains(&value),
+            "workflow still carries pin value {value}"
+        );
+    }
+}
+
+#[test]
+fn the_owner_keeps_the_full_pin_and_sandbox_files_stay_pinned() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pin = Pin::load(&root).expect("canonical pin");
+    let stale = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n{PIN_MARKER_BEGIN}\nexport JERYU_JANKURAI_SHA256=\"{}\"\n{PIN_MARKER_END}\n",
+        "0".repeat(64)
+    );
+    let owner = render_at("tool/ops/ci/pr-ci.sh", &stale, true);
+    assert!(
+        owner.contains(pin.get("binary_sha256")),
+        "jeryu-tool keeps the pin it owns"
+    );
+    let smoke = render_at("repo/ops/agent-sandbox/smoke.sh", &stale, false);
+    assert!(
+        smoke.contains(pin.get("binary_sha256")),
+        "the sandbox image smoke keeps the baked pin"
+    );
+}
