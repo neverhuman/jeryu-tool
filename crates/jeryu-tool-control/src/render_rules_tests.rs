@@ -402,3 +402,27 @@ fn consumer_and_owner_renders_are_idempotent() {
         );
     }
 }
+
+#[test]
+fn a_consumer_workflow_whose_env_held_only_the_pin_loses_the_section() {
+    let workflow = format!(
+        "name: ci\non: push\nenv:\n  {WORKFLOW_PIN_MARKER_BEGIN}\n  JANKURAI_BINARY_SHA256: \"{}\"\n  {WORKFLOW_PIN_MARKER_END}\njobs:\n  ci:\n    runs-on: ubuntu-latest\n",
+        "0".repeat(64)
+    );
+    let once = render_at(".github/workflows/ci.yml", &workflow, false);
+    assert!(
+        !once.contains("env:"),
+        "an env section with no keys is not a valid workflow: {once}"
+    );
+    assert!(
+        once.contains("jobs:\n  ci:"),
+        "the rest of the workflow is kept"
+    );
+    assert_eq!(
+        render_at(".github/workflows/ci.yml", &once, false),
+        once,
+        "stable on re-render"
+    );
+    let owner = render_at(".github/workflows/ci.yml", &workflow, true);
+    assert!(owner.contains("env:\n"), "jeryu-tool keeps its pinned env");
+}

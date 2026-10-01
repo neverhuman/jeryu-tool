@@ -144,6 +144,15 @@ pub(super) fn replace_workflow_pin_with(text: &str, workflow_block: &str) -> Str
             retained.push(line.to_owned());
         }
     }
+    if retained.is_empty()
+        && workflow_block
+            .lines()
+            .all(|line| line.trim_start().starts_with('#'))
+    {
+        // A pin-free block alone would leave `env:` with no keys, which is not a
+        // valid workflow; with nothing else to keep, the section goes.
+        return format!("{}{}", &text[..start], &text[body_end..]);
+    }
     retained.push(workflow_block);
     format!(
         "{}{}\n{}",
