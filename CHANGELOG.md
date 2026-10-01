@@ -1,5 +1,15 @@
 # Changelog
 
+## jeryu-tool-v5.1.0-split.7 — 2026-10-01
+
+### Changed
+- Pinned Jankurai `v1.6.11-deadlang-precision-split.4` (commit `2b83122`), a
+  rule-calibration release: dimensions that do not apply (no database) no longer
+  score as failures, Build speed and Security reach the floor with generic
+  signals, and HLT-001/006/008/030/038/042 are narrowed to real defects. Same
+  `Cargo.lock` and vendor closure; updated source tree, archive digest, build
+  context, and the twice-reproduced OCI binary digest `b05c03bc…f89103`.
+
 ## jeryu-tool-v5.1.0-split.6 — 2026-09-17
 
 ### Changed
