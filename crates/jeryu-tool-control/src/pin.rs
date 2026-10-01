@@ -333,6 +333,8 @@ impl Pin {
     /// auditor is whatever the host installed, and `require_jankurai` verifies that
     /// binary against its receipt and exports `JERYU_JANKURAI_*` from it. The one pin
     /// of record stays in jeryu-tool, so a Jankurai bump changes no consumer.
+    /// Like [`Pin::shell_block`] it ends at the END marker: the splice keeps the
+    /// newline that follows it, so the render is idempotent.
     pub fn consumer_shell_block() -> String {
         [
             PIN_MARKER_BEGIN,
@@ -342,7 +344,6 @@ impl Pin {
             PIN_MARKER_END,
         ]
         .join("\n")
-            + "\n"
     }
 
     /// The workflow counterpart of [`Pin::consumer_shell_block`].

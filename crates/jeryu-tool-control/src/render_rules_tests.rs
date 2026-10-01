@@ -367,3 +367,38 @@ fn the_owner_keeps_the_full_pin_and_sandbox_files_stay_pinned() {
         "the sandbox image smoke keeps the baked pin"
     );
 }
+
+#[test]
+fn consumer_and_owner_renders_are_idempotent() {
+    let stale = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n{PIN_MARKER_BEGIN}\nexport JERYU_JANKURAI_SHA256=\"{}\"\n{PIN_MARKER_END}\n\nrequire_jankurai() {{\n  :\n}}\njankurai() {{\n  require_jankurai || return 1\n  command \"${{JERYU_GOVERNED_JANKURAI_BIN}}\" \"$@\"\n}}\n",
+        "0".repeat(64)
+    );
+    for (rel, owner) in [
+        ("repo/ops/ci/lib.sh", false),
+        ("repo/ops/ci/pr-ci.sh", false),
+        ("repo/scripts/ci-doctor.sh", false),
+        ("repo/ops/ci/ensure-jankurai.sh", false),
+        ("tool/ops/ci/lib.sh", true),
+        ("tool/ops/ci/pr-ci.sh", true),
+    ] {
+        let once = render_at(rel, &stale, owner);
+        let twice = render_at(rel, &once, owner);
+        assert_eq!(
+            once, twice,
+            "{rel} (owner={owner}) changes when rendered again"
+        );
+    }
+    let workflow = format!(
+        "name: ci\non: push\nenv:\n  KEEP: \"1\"\n  {WORKFLOW_PIN_MARKER_BEGIN}\n  JANKURAI_BINARY_SHA256: \"{}\"\n  {WORKFLOW_PIN_MARKER_END}\njobs: {{}}\n",
+        "0".repeat(64)
+    );
+    for owner in [false, true] {
+        let once = render_at(".github/workflows/ci.yml", &workflow, owner);
+        let twice = render_at(".github/workflows/ci.yml", &once, owner);
+        assert_eq!(
+            once, twice,
+            "workflow (owner={owner}) changes when rendered again"
+        );
+    }
+}
