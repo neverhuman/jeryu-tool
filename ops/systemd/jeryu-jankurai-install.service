@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep the governed Jankurai on the jeryu-tool pin of record (install or confirm, refresh the authority stamp)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# install-jankurai-timer.sh writes the checkout path and this env file:
+# JERYU_FORGE_TOKEN_FILE (required), JERYU_JANKURAI_ROOT_COPY (optional).
+EnvironmentFile=%h/.config/jeryu/jankurai-install.env
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@JERYU_TOOL_CHECKOUT@/ops/auto-install-jankurai.sh
+Nice=10
+TimeoutStartSec=45min

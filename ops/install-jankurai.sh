@@ -8,6 +8,21 @@ die() {
   exit 1
 }
 
+# Record what this host's governed install is meant to be: the binary named by
+# the pin of record this run installed or confirmed. require_jankurai fails a
+# host whose installed auditor no longer matches it. Written atomically, owner-only.
+write_authority_stamp() {
+  local sha="$1" version="$2" dir="${install_root}/authority" tmp
+  mkdir -p -- "${dir}" && chmod 0700 -- "${dir}" || die "authority stamp directory unavailable: ${dir}"
+  tmp="$(mktemp "${dir}/.jankurai.json.XXXXXX")" || die "authority stamp staging failed"
+  jq -n --arg sha "${sha}" --arg version "${version}" --arg commit "${manifest_commit}" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schema: "jeryu.jankurai-authority-stamp/v1", binary_sha256: $sha, version: $version,
+      manifest_commit: $commit, written_at: $at}' >"${tmp}" || die "authority stamp write failed"
+  chmod 0600 -- "${tmp}"
+  mv -fT -- "${tmp}" "${dir}/jankurai.json" || die "authority stamp publication failed"
+}
+
 sha256_file() {
   sha256sum "$1" | awk '{print $1}'
 }
@@ -548,6 +563,7 @@ if [[ -e "${target_custody_path}" || -L "${target_custody_path}" ]]; then
          "${receipt_digest}" ]] ||
         die "content-addressed receipt failed self-verification: ${receipt}"
       require_transaction_custody
+      write_authority_stamp "${existing_sha}" "${JANKURAI_VERSION}"
       printf 'jeryu jankurai already current: %s sha256=%s receipt=%s\n' \
         "${JANKURAI_VERSION}" "${existing_sha}" "${receipt}"
       exit 0
@@ -900,5 +916,6 @@ fi
 require_transaction_custody
 
 success=1
+write_authority_stamp "${installed_sha}" "${installed_version}"
 printf 'jeryu jankurai installed: %s sha256=%s path=%s receipt=%s\n' \
   "${installed_version}" "${installed_sha}" "${target}" "${receipt_path}"

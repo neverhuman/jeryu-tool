@@ -1,0 +1,10 @@
+[Unit]
+Description=Install the pinned governed Jankurai every 10 minutes (a merged pin bump reaches this host by itself)
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

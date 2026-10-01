@@ -278,8 +278,17 @@ env JERYU_INSTALL_TEST_MODE=1 JERYU_INSTALL_ROOT="${predictable_leaf_root}" \
 root="${tmp}/success"
 run_test_install "${root}" "${good_pin}" "${good}" >/dev/null
 [[ "$(sha "${root}/bin/jankurai")" == "${good_sha}" ]] || fail "success digest mismatch"
+stamp="${root}/authority/jankurai.json"
+jq -e --arg sha "${good_sha}" \
+  '.schema == "jeryu.jankurai-authority-stamp/v1" and .binary_sha256 == $sha and
+   (.manifest_commit | test("^[0-9a-f]{40}$"))' "${stamp}" >/dev/null ||
+  fail "a successful install did not stamp the pinned binary"
+[[ "$(stat -c '%a' -- "${stamp}")" == 600 ]] || fail "authority stamp is not owner-only"
 receipt_count="$(find "${root}/receipts/jankurai/sha256" -type f -name '*.json' | wc -l)"
+rm -f -- "${stamp}"
 run_test_install "${root}" "${good_pin}" "${good}" >/dev/null
+jq -e --arg sha "${good_sha}" '.binary_sha256 == $sha' "${stamp}" >/dev/null ||
+  fail "an already-current install did not restamp the pinned binary"
 [[ "$(find "${root}/receipts/jankurai/sha256" -type f -name '*.json' | wc -l)" == "${receipt_count}" ]] ||
   fail "idempotent run created a new receipt"
 
@@ -633,4 +642,4 @@ expect_failure "corrupt rollback artifact" \
 [[ "$(sha "${corrupt_root}/bin/jankurai")" == "${old_sha}" ]] ||
   fail "corrupt rollback artifact changed target"
 
-printf 'install-jankurai tests passed: governed-root lock-custody physical-ancestors exclusive-leaves hard-links replacement-races external-sentinels success idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback concurrent-lock corrupt-rollback\n'
+printf 'install-jankurai tests passed: governed-root lock-custody physical-ancestors exclusive-leaves hard-links replacement-races external-sentinels success authority-stamp idempotency receipt-governance external-source redirect-guard wrong-digest wrong-version offline interruption rollback concurrent-lock corrupt-rollback\n'
