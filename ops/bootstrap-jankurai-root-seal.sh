@@ -17,7 +17,7 @@ readonly production_token_file="${production_install_dir}/jeryu-merge-token"
 readonly production_remote="http://127.0.0.1:8787/git/jeryu/jeryu-tool.git"
 readonly production_splitops_remote="http://127.0.0.1:8787/git/veox/jain-split-ops.git"
 readonly production_predecessor_sha256="96d99e6e7d8dc9cf23df1081edd1f975231456592f81d9405385219a2c7298aa"
-readonly production_candidate_sha256="9e6b8857a26f6004d4c74e510e13b06d880f2e2ae0c89502698889ed690c5d6c"
+readonly production_candidate_sha256="b05c03bcb0fb2d004d3daa303ae236b8985b39e393567e8f8d274cd9f6f89103"
 readonly maximum_lifetime_seconds=900
 
 fail() {
