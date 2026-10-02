@@ -31,7 +31,7 @@ registry.
 | `ops/registry-summary.sh` | Runs the locked Rust validator for the registry + tasks and computes the golden-box summary (`--check` runs in `just check`). |
 | `ops/render-tool-manifest.sh` | Propagates the jankurai pin into every family consumer (CI scripts, workflow envs, sandbox Dockerfiles, per-repo `required_tool_version`). `--check` is the drift lane. |
 | `ops/build-jankurai-hermetic.sh` | Materializes and verifies the closed Cargo vendor inventory, then builds the immutable source as a non-root user in the digest-pinned read-only OCI builder with network disabled. |
-| `ops/install-jankurai.sh` | Verifies the immutable local-forge source, rejects test authority at `/home/ubuntu/.jeryu`, serializes the complete install/rollback/receipt transaction under a custody-checked lock, delegates to the hermetic builder, atomically installs the binary, preserves rollback content, and writes a content-addressed receipt. |
+| `ops/install-jankurai.sh` | Verifies the immutable local-forge source, rejects test authority at the operator's `~/.jeryu`, serializes the complete install/rollback/receipt transaction under a custody-checked lock, delegates to the hermetic builder, atomically installs the binary, preserves rollback content, and writes a content-addressed receipt. |
 | `ops/qualify-jankurai-candidate.sh` | Builds the exact premerge candidate into a temporary root and persists a content-addressed diagnostic receipt; it can never target the governed host root. |
 | `ops/bootstrap-jankurai-root-seal.sh` | Installed-root-only, PR7-specific cycle breaker: authenticates its own installed entrypoint/pin Git blobs and the installed immutable SplitOps authority, consumes one short-lived request, exposes the pinned candidate to one fixed required-check attempt, and restores the protected predecessor on every exit or recovery. It is not executable from a checkout and is not an installer. |
 | `ops/test-bootstrap-jankurai-root-seal.sh` | Proves checkout refusal, installed ancestry/blob/config/broker custody, fixed remote/ref/tag/protection, wrong digest/head/tree/receipt, expiry/reuse, pathname replacement, same-inode drift, held execution, signal, recovery, failure-result, and byte-exact restoration. |
@@ -59,7 +59,7 @@ bounded package-only feedback commands; `just required` is the complete gate.
 ## Upgrading jankurai (the whole family at once)
 
 1. Edit `[jankurai]` in `tool-manifest.toml`.
-2. Commit the manifest update, then run `JERYU_FORGE_TOKEN_FILE=<absolute-private-token-path> ops/render-tool-manifest.sh --repo <name> --repo-root <name>=/home/ubuntu/jain-split/jeryu-split/<name> --expected-head <name>=<40-hex-sha>` for every explicitly claimed root. Unscoped invocation is check-only; writes require the exact handed-off clean canonical physical checkout based on current protected `main`. Alternate clones and registered worktrees are read-only fixtures and can never receive generated writes; the token path must name an owner-held mode-0600, single-link regular file.
+2. Commit the manifest update, then run `JERYU_FORGE_TOKEN_FILE=<absolute-private-token-path> ops/render-tool-manifest.sh --repo <name> --repo-root <name>=<split-root>/<name> --expected-head <name>=<40-hex-sha>` for every explicitly claimed root. Unscoped invocation is check-only; writes require the exact handed-off clean canonical physical checkout based on current protected `main`. Alternate clones and registered worktrees are read-only fixtures and can never receive generated writes; the token path must name an owner-held mode-0600, single-link regular file.
 3. Land every consumer and this manifest through exact-head protected PRs, then require `ops/render-tool-manifest.sh --check` to be drift-free.
 4. Host: `ops/install-jankurai.sh` rebuilds through the exact digest-pinned,
    network-disabled OCI contract and atomically installs only when source,
@@ -77,7 +77,7 @@ broker selection: it lends the exact candidate bytes to one root-seal attempt,
 under root-held transaction custody, and restores protected-main authority
 before returning. Once an independently reviewed candidate is installed after
 protected merge, the same gate automatically requires
-`/home/ubuntu/.jeryu/bin/jankurai` plus its production receipt (or can be
+`~/.jeryu/bin/jankurai` plus its production receipt (or can be
 forced fail-closed with `JERYU_TOOL_REQUIRE_GOVERNED_HOST=1`). The GitHub
 workflow is a static, non-authoritative mirror and is not a release or review
 authority.

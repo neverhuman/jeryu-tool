@@ -1,7 +1,7 @@
 # Release Process
 
 This document governs release of the Jeryu tool control plane and promotion of
-its Jankurai authority. It does not authorize Jain candidate metadata, formal
+its Jankurai authority. It does not authorize downstream product candidate metadata, formal
 GA, public routing, or an external package publication.
 
 ## Version and source authority

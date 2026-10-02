@@ -131,7 +131,7 @@ running `ops/render-tool-manifest.sh` must update every consumer; `--check` must
 then be green. Reverting any one consumer by hand must make `--check` fail.
 
 Write-mode hostiles additionally prove that only
-`/home/ubuntu/jain-split/jeryu-split/<repo>` can be mutated, the repository has
+`<split-root>/<repo>` (the canonical checkout) can be mutated, the repository has
 one ordinary local `.git` directory and no additional registered worktrees,
 checkout-local Git execution is disabled, and the credential is read only from
 an absolute stable mode-0600 owner-held single-link regular file. Authentication
@@ -160,7 +160,7 @@ does not inherit the checkout's remote-tracking protected-main ref. Bind the
 disposable clone explicitly to live forge readback before running the gate:
 
 ```bash
-repo_path=/home/ubuntu/jain-split/jeryu-split/jeryu-tool
+repo_path=<split-root>/jeryu-tool
 remote=https://git.neverhuman.org/git/jeryu/jeryu-tool.git
 head=<full-published-pr-sha>
 protected_main="$(git ls-remote "$remote" refs/heads/main | awk '{print $1}')"
