@@ -16,14 +16,14 @@ schema_version = "1"
 
 [jankurai]
 repo                  = "https://git.neverhuman.org/git/jeryu/jankurai.git"
-rev                   = "2b8312215573eb225075ca0556f1208ae5265b8c"
-tag                   = "v1.6.11-deadlang-precision-split.4"
+rev                   = "aaed4a0dace42a0e63c88b951eb67f5f0c24a5c8"
+tag                   = "v1.6.11-deadlang-precision-split.5"
 version               = "jankurai 1.6.11"
 semver                = "1.6.11"
-source_tree           = "bc15c67053db2d1e87e25e71276766d055130701"
-source_archive_sha256 = "2c8fbbd71a73c978b58bf038f30008b937a16969ec52a528f21ce2d7fa404cf6"
+source_tree           = "c1f353e7c8efdcb4746732f4002fa8f505eb3c24"
+source_archive_sha256 = "bde45dc004bdaddd9d64f8297210b00bf0321c28e061f7837f83986f1a045b1e"
 cargo_lock_sha256     = "b9acb981c326226a687d0b6703e4f7ee303148e9e1a6dda1aa03d77988820f6a"
-binary_sha256         = "b05c03bcb0fb2d004d3daa303ae236b8985b39e393567e8f8d274cd9f6f89103"
+binary_sha256         = "d94d3e21b9e91c94eddc9adca3af5025d323ba9ceb560015fc6027343217f3ab"
 rust_toolchain        = "1.95.0"
 rustc_version         = "rustc 1.95.0 (59807616e 2026-04-14)"
 cargo_version         = "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
@@ -40,7 +40,7 @@ cargo_config_sha256   = "b8982c761d62e447f2d1653c199d2d58e6b2de6c5a6f8ddba3d38e4
 build_environment     = "CARGO_NET_OFFLINE=true,HOME=/tmp,LANG=C,LC_ALL=C,SOURCE_DATE_EPOCH=0,TZ=UTC"
 rustflags             = "--remap-path-prefix=/opt/jeryu/jankurai=/jankurai-build/source --remap-path-prefix=/opt/jeryu/vendor=/jankurai-build/vendor --remap-path-prefix=/opt/jeryu/target=/jankurai-build/target --remap-path-prefix=/usr/local/cargo=/jankurai-build/cargo"
 build_command         = "cargo install --locked --offline --path /opt/jeryu/jankurai/crates/jankurai --root /opt/jeryu/out --bin jankurai"
-build_context_sha256  = "c8303ff86f53ccbcde8b64a1b921cbb61031a2f801ab58440b044fabf76be4a2"
+build_context_sha256  = "78b3a85efd4192c2b0a69264a9994cdcdcd4d5db171648ca063c5b9c9a9c5da2"
 
 [floors]
 # Per-profile minimum_score. Consumed by the jeryu-managed default policy

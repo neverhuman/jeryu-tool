@@ -1,5 +1,16 @@
 # Changelog
 
+## jeryu-tool-v5.1.0-split.8 — 2026-10-02
+
+### Changed
+- Pinned Jankurai `v1.6.11-deadlang-precision-split.5` (commit `aaed4a0`): forge-gated
+  CI is read from `.jeryu/ci.toml` (schema "2", `provider = "jeryu"`) and credited only
+  from the lane text the declaration resolves to, including `just` recipe
+  dependencies; code-first contracts under generated zones satisfy HLT-007; HLT-047
+  checks that agent instruction files point at `AGENTS.md`. Same `Cargo.lock` and
+  vendor closure; updated source tree, archive digest, build context, and the
+  reproduced OCI binary digest `d94d3e21…7f3ab`.
+
 ## jeryu-tool-v5.1.0-split.7 — 2026-10-01
 
 ### Changed
