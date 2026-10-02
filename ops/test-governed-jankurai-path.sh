@@ -67,11 +67,19 @@ fi
 [[ "${governed_source}" == /* && -f "${governed_source}" &&
    ! -L "${governed_source}" && -x "${governed_source}" ]] ||
   fail "governed Jankurai test source is unavailable"
-[[ "$("${governed_source}" --version)" == 'jankurai 1.6.11' ]] ||
+# The fixture is the host's own verified installation, not the pin this commit names:
+# hosts install a new pin only after it lands on protected main, so a pin bump must
+# not need its binary installed first. require_jankurai proves the source (custody,
+# receipt, host authority stamp).
+if [[ "${governed_source}" == "${production_governed}" ]]; then
+  # shellcheck disable=SC2016 # the child shell expands its positional input
+  env -i HOME="${HOME}" PATH=/usr/bin:/bin bash -c 'source "$1" && require_jankurai >/dev/null' \
+    bash "${source_lib}" || fail "host governed Jankurai does not verify"
+fi
+expected_version="$("${governed_source}" --version)"
+[[ "${expected_version}" == "jankurai "* ]] ||
   fail "governed Jankurai test source has the wrong version"
-[[ "$(sha256sum "${governed_source}" | awk '{print $1}')" == \
-   "${JERYU_JANKURAI_SHA256}" ]] ||
-  fail "governed Jankurai test source has the wrong digest"
+expected_sha="$(sha256sum "${governed_source}" | awk '{print $1}')"
 
 broker_bin="${tmp}/broker/bin/jankurai"
 attacker_bin="${tmp}/attacker/bin/jankurai"
@@ -81,7 +89,7 @@ cp -- "${governed_source}" "${broker_bin}"
 cp -- "${governed_source}" "${attacker_bin}"
 cp -- "${governed_source}" "${ambient_bin}"
 chmod 0555 "${broker_bin}" "${attacker_bin}" "${ambient_bin}"
-printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${older_local_bin}"
+printf '#!/usr/bin/env bash\nprintf "%s\\n"\n' "${expected_version}" >"${older_local_bin}"
 chmod 0555 "${older_local_bin}"
 # A release broker carries no receipt: its digest record sits beside it with
 # the same read-only, single-link custody.
@@ -114,8 +122,8 @@ jq -n \
   --arg rustflags "${JERYU_JANKURAI_RUSTFLAGS}" \
   --arg command "${JERYU_JANKURAI_BUILD_COMMAND}" \
   --arg context "${JERYU_JANKURAI_BUILD_CONTEXT_SHA256}" \
-  --arg digest "${JERYU_JANKURAI_SHA256}" \
-  --arg version "${JERYU_JANKURAI_VERSION}" \
+  --arg digest "${expected_sha}" \
+  --arg version "${expected_version}" \
   --arg path "${ambient_bin}" \
   '{schema:"jeryu.jankurai-installation/v2",
     source:{remote:$remote,commit:$commit,tag:$tag,tree:$tree,
@@ -256,7 +264,7 @@ expect_failure "missing broker auditor" "release broker Jankurai path mismatch" 
 
 cp -- "${broker_bin}" "${tmp}/governed-backup"
 chmod 0755 "${broker_bin}"
-printf '#!/usr/bin/env bash\nprintf "jankurai 1.6.11\\n"\n' >"${broker_bin}"
+printf '#!/usr/bin/env bash\nprintf "%s\\n"\n' "${expected_version}" >"${broker_bin}"
 chmod 0555 "${broker_bin}"
 expect_failure "wrong broker binary" "but the jeryu-tool pin names" \
   run_release_broker "${tmp}/broker/bin"
